@@ -68,20 +68,24 @@
         <div class="ov-card"><div class="ov-l">In Discussion</div><div class="ov-v" id="ov-disc" style="color:var(--accent)">—</div><div class="ov-s">active threads</div></div>
         <div class="ov-card"><div class="ov-l">Pending</div><div class="ov-v" id="ov-pend" style="color:var(--amber)">—</div><div class="ov-s">no replies yet</div></div>
       </div>
-      <div class="info-bx ov-meta" style="margin-bottom:22px">
-        <table>
-          <tr><td>Document</td><td>QA - AI Tool</td></tr>
-          <tr><td>Prepared</td><td>March 6, 2026</td></tr>
-          <tr><td>Version</td><td>1.0</td></tr>
-          <tr><td>Current Role</td><td id="ov-role">Admin</td></tr>
-          <tr><td>Last Updated</td><td id="ov-date">—</td></tr>
-        </table>
+      <div class="ov-lower">
+        <div class="ov-breakdown">
+          <div class="stage-breakdown-hdr" style="font-size:13px;font-weight:600;margin-bottom:10px">Section Breakdown</div>
+          <div class="stage-breakdown-tbl info-bx"><table class="sst">
+            <thead><tr><th>Section</th><th>Resolved</th><th style="min-width:130px">Progress</th><th></th></tr></thead>
+            <tbody id="sst-body"></tbody>
+          </table></div>
+        </div>
+        <div class="info-bx ov-meta">
+          <table>
+            <tr><td>Document</td><td>QA - AI Tool</td></tr>
+            <tr><td>Prepared</td><td>March 6, 2026</td></tr>
+            <tr><td>Version</td><td>1.0</td></tr>
+            <tr><td>Current Role</td><td id="ov-role">Admin</td></tr>
+            <tr><td>Last Updated</td><td id="ov-date">—</td></tr>
+          </table>
+        </div>
       </div>
-      <div class="stage-breakdown-hdr" style="font-size:13px;font-weight:600;margin-bottom:10px">Section Breakdown</div>
-      <div class="stage-breakdown-tbl info-bx"><table class="sst">
-        <thead><tr><th>Section</th><th>Resolved</th><th style="min-width:130px">Progress</th><th></th></tr></thead>
-        <tbody id="sst-body"></tbody>
-      </table></div>
       <!-- Mobile-only stage navigation (rendered by renderOverview) -->
       <div id="mobile-stage-nav" class="mobile-stage-nav"></div>
     </div>

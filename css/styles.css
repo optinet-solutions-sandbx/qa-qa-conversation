@@ -234,7 +234,11 @@ main{margin-left:var(--sw);flex:1;padding:32px 40px;max-width:980px}
 .btn-rop:hover{background:rgba(245,158,11,.2)}
 
 /* ── Overview ────────────────────────────────────────── */
-.ov-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px;margin-bottom:22px}
+.ov-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:22px}
+.ov-lower{display:flex;gap:20px;align-items:flex-start;margin-bottom:20px}
+.ov-breakdown{flex:1;min-width:0}
+.ov-breakdown .stage-breakdown-tbl{margin-bottom:0}
+.ov-meta{width:260px;flex-shrink:0;margin-bottom:0}
 .ov-card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:16px}
 .ov-l{font-size:10px;text-transform:uppercase;letter-spacing:.07em;color:var(--text3);margin-bottom:4px;font-weight:600}
 .ov-v{font-size:26px;font-weight:700}
@@ -333,6 +337,8 @@ main{margin-left:var(--sw);flex:1;padding:32px 40px;max-width:980px}
 
   /* Hide metadata info box; keep Stage Breakdown visible */
   .ov-meta{display:none}
+  .ov-lower{flex-direction:column}
+  .ov-breakdown .stage-breakdown-tbl{margin-bottom:0}
   .mobile-stage-nav{display:block}
 
   /* Sidebar becomes a slide-in drawer */
