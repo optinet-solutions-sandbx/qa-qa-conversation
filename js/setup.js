@@ -133,10 +133,8 @@ function handleFileSelect(input) {
   const reader = new FileReader();
   reader.onload = (e) => {
     uploadedFileContent = e.target.result;
-    // For preview, we could dump visible text into the textarea if it's JSON
-    if (file.name.endsWith('.json')) {
-        document.getElementById('import-text').value = uploadedFileContent;
-    }
+    // Always populate the analyze field so the user can see/edit the content
+    document.getElementById('import-text').value = uploadedFileContent;
   };
   reader.readAsText(file);
 }
