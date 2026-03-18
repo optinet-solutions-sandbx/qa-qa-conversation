@@ -143,7 +143,8 @@ function handleFileSelect(input) {
 
 async function analyzeConversation(conversationText) {
   try {
-    // Call our own server-side API endpoint
+    // Call our serverless API endpoint. This relative path works for both
+    // local development and production deployments (e.g., on Vercel).
     const response = await fetch('/api/analyze', {
       method: 'POST',
       headers: {
@@ -152,13 +153,23 @@ async function analyzeConversation(conversationText) {
       body: JSON.stringify({ text: conversationText })
     });
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(data.error || 'Analysis failed');
+    // Check contentType to avoid parsing errors if Vercel returns an HTML error page (like 404/500)
+    const contentType = response.headers.get("content-type");
+    let data;
+    if (contentType && contentType.includes("application/json")) {
+      data = await response.json();
+    } else {
+      throw new Error(`Server returned non-JSON response: ${response.status} ${response.statusText}`);
     }
 
-    return { status: 'success', summary: data.summary };
+    if (!response.ok) {
+      throw new Error(data.error || `Analysis failed (Status: ${response.status})`);
+    }
+
+    // Pass the full structured data object from the API to the next function.
+    // The `summary` property is kept for backward compatibility with `applyAnalysisToDashboard`.
+    return { status: 'success', summary: data.summary, structuredData: data };
+
   } catch (err) {
     throw err;
   }
@@ -170,14 +181,24 @@ function showAnalysisResult(data) {
   if (existing) existing.remove();
 
   // Store for application
-  window.aiAnalysisData = data.summary;
+  window.aiAnalysisData = data.summary; // Used by applyAnalysisToDashboard
 
   const box = document.createElement('div');
   box.id = 'ai-res-box';
   box.className = 'ai-res-box';
+
+  // Display the new structured data from the analysis
+  const sentiment = esc(data.structuredData.sentiment || 'N/A');
+  const intent = esc(data.structuredData.intent || 'N/A');
+  const summary = esc(data.structuredData.summary || 'No summary provided.');
+
   box.innerHTML = `
-    <div class="ai-res-h">✨ Analysis Result</div>
-    <div class="ai-res-content">${data.summary}</div>
+    <div class="ai-res-h">✨ AI Analysis Result</div>
+    <div class="ai-res-content" style="display: grid; grid-template-columns: auto 1fr; gap: 5px 10px; align-items: center;">
+      <strong style="color: var(--text2);">Sentiment:</strong><span>${sentiment}</span>
+      <strong style="color: var(--text2);">Intent:</strong><span>${intent}</span>
+    </div>
+    <div class="ai-res-content" style="margin-top: 10px; white-space: pre-wrap; border-top: 1px solid var(--border); padding-top: 10px;">${summary}</div>
     <div style="margin-top:12px;text-align:right">
       <button class="btn-sm btn-p" onclick="applyAnalysisToDashboard()">Apply to Dashboard</button>
     </div>`;
@@ -260,8 +281,14 @@ async function runAnalysis() {
     showAnalysisResult(result);
     btn.textContent = 'Re-analyze';
   } catch (err) {
-    console.error(err);
-    if (typeof toast === 'function') toast('Analysis failed', 'i');
+    console.error('Analysis Error:', err);
+    let errorMessage = 'Analysis failed. See browser console for details.';
+    if (err instanceof TypeError) { // This often indicates a network error
+      errorMessage = 'Analysis failed. Could not connect to the backend. Is the server running?';
+    } else if (err.message) {
+      errorMessage = `Analysis failed: ${err.message}`;
+    }
+    if (typeof toast === 'function') toast(errorMessage, 'i');
     btn.textContent = originalText;
   } finally {
     btn.disabled = false;
