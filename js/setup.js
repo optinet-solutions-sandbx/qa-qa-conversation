@@ -238,18 +238,19 @@ function applyAnalysisToDashboard() {
   const id = 'conv-' + Date.now();
   const title = `${analysis.intent || 'General'} — ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
 
-  // Capture original text for future re-analysis
+  // Prefer conversation_text returned by the API (covers Intercom fetch too),
+  // fall back to whatever is in the paste textarea
   const pasteText = document.getElementById('import-text')?.value?.trim() || '';
 
   const conv = {
     id,
     title,
-    sentiment:    analysis.sentiment  || 'Neutral',
-    intent:       analysis.intent     || 'General',
-    summary:      analysis.summary    || '',
-    intercom_id:  analysis.intercom_id ? String(analysis.intercom_id) : null,
-    original_text: pasteText || null,
-    analyzed_at:  new Date().toISOString(),
+    sentiment:         analysis.sentiment        || 'Neutral',
+    intent:            analysis.intent           || 'General',
+    summary:           analysis.summary          || '',
+    intercom_id:       analysis.intercom_id ? String(analysis.intercom_id) : null,
+    original_text:     analysis.conversation_text || pasteText || null,
+    analyzed_at:       new Date().toISOString(),
     notes: []
   };
 
@@ -304,11 +305,12 @@ function addAnalysesToDashboard(analyses) {
     conversations.push({
       id,
       title,
-      sentiment:   analysis.sentiment  || 'Neutral',
-      intent:      analysis.intent     || 'General',
-      summary:     analysis.summary    || '',
-      intercom_id: String(analysis.intercom_id),
-      analyzed_at: new Date(analysis.created_at * 1000).toISOString(),
+      sentiment:     analysis.sentiment         || 'Neutral',
+      intent:        analysis.intent            || 'General',
+      summary:       analysis.summary           || '',
+      intercom_id:   String(analysis.intercom_id),
+      original_text: analysis.conversation_text || null,
+      analyzed_at:   new Date(analysis.created_at * 1000).toISOString(),
       notes: []
     });
     added++;

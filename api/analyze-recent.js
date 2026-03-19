@@ -105,7 +105,7 @@ export default async function handler(req, res) {
 
         const analysisResult = await getOpenAIAnalysis(contentToAnalyze, openAIKey);
         
-        return { ...analysisResult, intercom_id: convo.id, created_at: convo.created_at };
+        return { ...analysisResult, intercom_id: convo.id, created_at: convo.created_at, conversation_text: contentToAnalyze };
       } catch (error) {
         console.error(`Failed to analyze conversation ${convo.id}:`, error);
         return null; // Don't let one failure stop the whole batch

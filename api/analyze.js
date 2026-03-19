@@ -107,6 +107,7 @@ export default async function handler(req, res) {
     if (intercomId) {
       analysis.intercom_id = intercomId;
     }
+    analysis.conversation_text = contentToAnalyze;
     return res.status(200).json(analysis);
   } catch (error) {
     console.error('Analysis Error:', error);

@@ -41,6 +41,11 @@ function buildConvCard(c) {
     </div>
     <div class="conv-title">${esc(c.title)}</div>
     <div class="conv-summary">${esc(c.summary || '')}</div>
+    ${c.original_text ? `
+    <div class="conv-transcript-toggle" onclick="toggleTranscript('${c.id}')">
+      <span id="conv-tog-lbl-${c.id}">▶ View Conversation</span>
+    </div>
+    <div class="conv-transcript" id="conv-transcript-${c.id}">${esc(c.original_text)}</div>` : ''}
     <div class="conv-notes-section">
       <div class="conv-notes-hdr">💬 Team Notes <span class="conv-note-count" id="conv-nc-${c.id}">${c.notes && c.notes.length > 0 ? '(' + c.notes.length + ')' : ''}</span></div>
       <div class="conv-notes-list" id="notes-list-${c.id}">${buildNotesList(c)}</div>
@@ -79,6 +84,14 @@ function getSentClass(s) {
   if (l.includes('pos')) return 'sent-pos';
   if (l.includes('neg')) return 'sent-neg';
   return 'sent-neu';
+}
+
+function toggleTranscript(cid) {
+  const el = document.getElementById('conv-transcript-' + cid);
+  const lbl = document.getElementById('conv-tog-lbl-' + cid);
+  if (!el) return;
+  const open = el.classList.toggle('open');
+  if (lbl) lbl.textContent = open ? '▼ Hide Conversation' : '▶ View Conversation';
 }
 
 function convNoteKey(e, cid) {
