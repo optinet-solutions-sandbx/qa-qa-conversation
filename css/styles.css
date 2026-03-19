@@ -374,9 +374,9 @@ main{margin-left:var(--sw);flex:1;padding:32px 40px}
   .thread-overlay{align-items:flex-end;padding:0}
   .thread-modal{border-radius:16px 16px 0 0;max-height:92vh}
 
-  /* Modals full-width */
-  .add-modal{width:100%;border-radius:14px 14px 0 0;padding:22px 16px}
-  .add-overlay{align-items:flex-end}
+  /* Modals centered */
+  .add-modal{width:92%;border-radius:14px;padding:22px 16px}
+  .add-overlay{align-items:center}
 }
 
 /* ── Setup / Welcome Modal ───────────────────────────── */
