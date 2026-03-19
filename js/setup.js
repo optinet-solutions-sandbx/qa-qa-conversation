@@ -33,21 +33,7 @@ function checkUserSession() {
 }
 
 function addLiveAnalysisButton() {
-  const headerRight = document.querySelector('.hdr-r');
-  if (headerRight && !document.getElementById('live-analysis-btn')) {
-      const liveButton = document.createElement('button');
-      liveButton.id = 'live-analysis-btn';
-      liveButton.className = 'btn btn-g';
-      liveButton.innerHTML = '⚡️ Analyze Recent';
-      liveButton.onclick = runLiveAnalysis;
-      
-      const addQuestionBtn = headerRight.querySelector('.btn-p');
-      if (addQuestionBtn) {
-          headerRight.insertBefore(liveButton, addQuestionBtn);
-      } else {
-          headerRight.appendChild(liveButton);
-      }
-  }
+  // Button removed from header
 }
 
 function updateUserDisplay(name, role) {
