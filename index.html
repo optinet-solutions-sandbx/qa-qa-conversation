@@ -41,6 +41,12 @@
     <div class="nav-item active" data-stage="overview" onclick="showStage('overview',this)">
       <div class="nav-l"><div class="nav-ic">🏠</div>Overview</div>
     </div>
+    <div class="nav-item" data-stage="conversations" onclick="showConversations(this)">
+      <div class="nav-l"><div class="nav-ic">🔬</div><span class="nav-label">Conversation Analysis</span></div>
+      <span class="npill" id="pill-conversations">0</span>
+    </div>
+    <div class="sb-div"></div>
+    <div class="sb-lbl">Q&amp;A Sections</div>
     <!-- dynamic stage nav rendered by renderSidebar() -->
     <div id="sidebar-nav"></div>
   </aside>
@@ -65,6 +71,7 @@
           <div class="ov-card"><div class="ov-l">Resolved</div><div class="ov-v" id="ov-res" style="color:var(--green)">—</div><div class="ov-s">marked answered</div></div>
           <div class="ov-card"><div class="ov-l">In Discussion</div><div class="ov-v" id="ov-disc" style="color:var(--accent)">—</div><div class="ov-s">active threads</div></div>
           <div class="ov-card"><div class="ov-l">Pending</div><div class="ov-v" id="ov-pend" style="color:var(--amber)">—</div><div class="ov-s">no replies yet</div></div>
+          <div class="ov-card"><div class="ov-l">Conversations</div><div class="ov-v" id="ov-conv" style="color:var(--accent2)">0</div><div class="ov-s">analyzed</div></div>
         </div>
         <div class="info-bx ov-meta">
           <table>
@@ -82,6 +89,18 @@
       </table></div>
       <!-- Mobile-only stage navigation (rendered by renderOverview) -->
       <div id="mobile-stage-nav" class="mobile-stage-nav"></div>
+    </div>
+
+    <!-- Conversation Analysis Section -->
+    <div class="stage-blk" id="stage-conversations">
+      <div class="stage-hdr">
+        <div>
+          <div class="s-ey">🔬 Analysis</div>
+          <div class="s-ti">Conversation Analysis</div>
+          <div class="s-sub">AI-analyzed conversations — add notes to improve future analysis</div>
+        </div>
+      </div>
+      <div id="conv-list"></div>
     </div>
 
     <!-- dynamic stage blocks rendered by renderStageBlocks() -->
@@ -255,6 +274,7 @@
 <script src="js/stage-manager.js"></script>
 <script src="js/export.js"></script>
 <script src="js/db.js"></script>
+<script src="js/conversations.js"></script>
 <script src="js/init.js"></script>
 <script src="js/setup.js"></script>
 </body>

@@ -1,6 +1,6 @@
 // ── STATE ─────────────────────────────────────────────────────────
 
-let questions = [], stages = [], currentRole = 'admin', openQid = null;
+let questions = [], stages = [], conversations = [], currentRole = 'admin', openQid = null;
 const SK = 'qa-dash-v5';
 
 async function loadState() {
@@ -30,6 +30,11 @@ async function loadState() {
           .map(m => ({ role: m.role, text: m.text, ts: m.created_at })),
       }));
       console.info('[Supabase] Loaded', stages.length, 'stages,', questions.length, 'questions');
+      // Conversations are localStorage-only (no Supabase table)
+      try {
+        const lc = localStorage.getItem('qa-conv-v1');
+        if (lc) conversations = JSON.parse(lc);
+      } catch(_) {}
       return;
     } catch (e) {
       console.error('[Supabase] loadState failed, falling back to localStorage:', e.message);
@@ -43,6 +48,7 @@ async function loadState() {
       const d = JSON.parse(s);
       questions = d.questions;
       stages    = d.stages || JSON.parse(JSON.stringify(DEFAULT_STAGES));
+      conversations = d.conversations || [];
     } else {
       initDefault();
     }
@@ -64,6 +70,6 @@ function initDefault() {
 function save() {
   localStorage.setItem('qa-role', currentRole);
   if (!window.db) {
-    localStorage.setItem(SK, JSON.stringify({ questions, stages, role: currentRole }));
+    localStorage.setItem(SK, JSON.stringify({ questions, stages, conversations, role: currentRole }));
   }
 }

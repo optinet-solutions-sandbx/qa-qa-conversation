@@ -65,6 +65,7 @@ function renderAll() {
   updateGlobal();
   updatePills();
   setRole(currentRole);
+  renderConversations();
 }
 
 function renderStage(stage) {
@@ -263,6 +264,8 @@ function renderOverview() {
   document.getElementById('ov-res').textContent = res;
   document.getElementById('ov-disc').textContent = disc;
   document.getElementById('ov-pend').textContent = pend;
+  const convEl = document.getElementById('ov-conv');
+  if (convEl) convEl.textContent = conversations.length;
   document.getElementById('ov-date').textContent = new Date().toLocaleDateString('en-GB', {
     day: 'numeric', month: 'long', year: 'numeric',
   });
@@ -282,6 +285,15 @@ function renderOverview() {
       <td><span class="sst-go" onclick="showStage('${st.id}',null)">View →</span></td>`;
     tbody.appendChild(tr);
   });
+
+  // Conversations row in section breakdown
+  const convTr = document.createElement('tr');
+  convTr.innerHTML = `
+    <td style="font-weight:500">🔬 Conversation Analysis</td>
+    <td style="color:var(--text2)">${conversations.length} total</td>
+    <td><span style="font-size:11px;color:var(--text3)">${conversations.length > 0 ? conversations.length + ' analyzed' : 'None yet'}</span></td>
+    <td><span class="sst-go" onclick="showConversations(null)">View →</span></td>`;
+  tbody.appendChild(convTr);
 
   // Mobile stage navigation cards
   const msnEl = document.getElementById('mobile-stage-nav');

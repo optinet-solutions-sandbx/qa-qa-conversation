@@ -109,6 +109,7 @@ function saveUserSetup() {
   // Close Modal
   document.getElementById('welcome-overlay').classList.remove('open');
   if (typeof toast === 'function') toast(`Welcome, ${name}!`, 'ok');
+  
 }
 
 // ── IMPORT / AI MODAL LOGIC ───────────────────────────────────────
@@ -231,56 +232,30 @@ function showAnalysisResult(data) {
 }
 
 function applyAnalysisToDashboard() {
-  if (!window.aiAnalysisData) return; // This is now the structured object
+  if (!window.aiAnalysisData) return;
   const analysis = window.aiAnalysisData;
 
-  // Default to 's-ai' (Conversation Analysis) or fallback to first stage
-  let targetStage = stages.find(s => s.id === 's-ai') || stages[0];
-  if (!targetStage) {
-    if (typeof toast === 'function') toast('No sections available', 'i');
-    return;
-  }
-  
-  const sq = questions.filter(q => q.stage === targetStage.id);
-  const stIdx = stages.findIndex(s => s.id === targetStage.id);
-  
-  const id = `q-${targetStage.id}-${Date.now()}`;
-  const num = `Q${stIdx + 1}.${sq.length + 1} (AI)`;
-  const role = (typeof currentRole !== 'undefined') ? currentRole : 'admin';
+  const id = 'conv-' + Date.now();
+  const title = `${analysis.intent || 'General'} — ${new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
 
-  // Create a more descriptive title and thread message
-  const title = `Analysis: ${analysis.intent || 'General'} - ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-  const threadText = `**Analysis Result**
-Sentiment: ${analysis.sentiment}
-Intent: ${analysis.intent}
-${analysis.intercom_id ? `Intercom ID: ${analysis.intercom_id}\n` : ''}
-**Summary:**
-${analysis.summary}`;
-
-  const newQ = {
+  const conv = {
     id,
-    stage: targetStage.id,
-    num,
-    text: title,
-    resolved: false,
-    thread: [{ role, text: threadText, ts: new Date().toISOString() }]
+    title,
+    sentiment:   analysis.sentiment  || 'Neutral',
+    intent:      analysis.intent     || 'General',
+    summary:     analysis.summary    || '',
+    intercom_id: analysis.intercom_id ? String(analysis.intercom_id) : null,
+    analyzed_at: new Date().toISOString(),
+    notes: []
   };
 
-  questions.push(newQ);
+  conversations.push(conv);
   save();
-  
-  if (typeof dbInsertQuestion === 'function') dbInsertQuestion(newQ);
-  if (typeof dbInsertMessage === 'function') dbInsertMessage(id, role, threadText);
-
-  renderStageBlocks();
-  stages.forEach(st => renderStage(st.id));
-  updateGlobal();
-  updatePills();
+  renderConversations();
   renderOverview();
-  
   closeImportModal();
-  showStage(targetStage.id, null);
-  toast(`Added analysis to ${targetStage.label}`, 'ok');
+  showConversations(null);
+  toast('Conversation analysis saved', 'ok');
 }
 
 async function runLiveAnalysis() {
@@ -313,35 +288,34 @@ async function runLiveAnalysis() {
 }
 
 function addAnalysesToDashboard(analyses) {
-  let targetStage = stages.find(s => s.id === 's-ai') || stages[0];
-  if (!targetStage) return;
-
-  const stIdx = stages.findIndex(s => s.id === targetStage.id);
-  const role = (typeof currentRole !== 'undefined') ? currentRole : 'admin';
+  let added = 0;
 
   analyses.forEach(analysis => {
-    const existing = questions.some(q => q.thread.some(t => t.text.includes(`Intercom ID: ${analysis.intercom_id}`)));
+    const existing = conversations.some(c => c.intercom_id && c.intercom_id === String(analysis.intercom_id));
     if (existing) return;
 
-    const sq = questions.filter(q => q.stage === targetStage.id);
-    const id = `q-${targetStage.id}-${Date.now()}-${Math.random()}`;
-    const num = `Q${stIdx + 1}.${sq.length + 1} (AI)`;
-    
-    const title = `Analysis: ${analysis.intent || 'General'} - ${new Date(analysis.created_at * 1000).toLocaleDateString()}`;
-    const threadText = `**Analysis Result**\nSentiment: ${analysis.sentiment}\nIntent: ${analysis.intent}\nIntercom ID: ${analysis.intercom_id}\n\n**Summary:**\n${analysis.summary}`;
+    const id = 'conv-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+    const title = `${analysis.intent || 'General'} — ${new Date(analysis.created_at * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}`;
 
-    const newQ = { id, stage: targetStage.id, num, text: title, resolved: false, thread: [{ role, text: threadText, ts: new Date().toISOString() }] };
-
-    questions.push(newQ);
-    if (typeof dbInsertQuestion === 'function') dbInsertQuestion(newQ);
-    if (typeof dbInsertMessage === 'function') dbInsertMessage(id, role, threadText);
+    conversations.push({
+      id,
+      title,
+      sentiment:   analysis.sentiment  || 'Neutral',
+      intent:      analysis.intent     || 'General',
+      summary:     analysis.summary    || '',
+      intercom_id: String(analysis.intercom_id),
+      analyzed_at: new Date(analysis.created_at * 1000).toISOString(),
+      notes: []
+    });
+    added++;
   });
 
-  renderStage(targetStage.id);
-  updateGlobal();
-  updatePills();
-  renderOverview();
-  showStage(targetStage.id, null);
+  if (added > 0) {
+    save();
+    renderConversations();
+    renderOverview();
+    showConversations(null);
+  }
 }
 
 async function runAnalysis() {
