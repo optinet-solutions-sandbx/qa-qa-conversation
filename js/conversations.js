@@ -51,13 +51,12 @@ function buildConvCard(c) {
       <div class="conv-notes-list" id="notes-list-${c.id}">${buildNotesList(c)}</div>
       <div class="conv-note-input-row">
         <input class="conv-note-input" id="note-input-${c.id}"
-               placeholder="Add a note to improve future analysis… (Enter to send)"
+               placeholder="Add a team note… (Enter to send)"
                onkeydown="convNoteKey(event,'${c.id}')"/>
         <button class="conv-note-btn" onclick="addConvNote('${c.id}')">Add</button>
       </div>
     </div>
     <div class="conv-card-footer">
-      <button class="conv-reanalyze-btn" id="reanalyze-btn-${c.id}" onclick="reanalyzeConversation('${c.id}')">✨ Re-analyze with Notes</button>
       <button class="conv-del-btn" onclick="deleteConversation('${c.id}')">🗑 Delete</button>
     </div>`;
 
