@@ -24,6 +24,10 @@ document.getElementById('run-analyze-overlay').addEventListener('click', e => {
   if (e.target === document.getElementById('run-analyze-overlay')) closeRunAnalyzeModal();
 });
 
+document.getElementById('prompt-modal-overlay').addEventListener('click', e => {
+  if (e.target === document.getElementById('prompt-modal-overlay')) closePromptModal();
+});
+
 // ── BOOT (async to support Supabase) ─────────────────────────────
 
 (async function boot() {
@@ -31,4 +35,5 @@ document.getElementById('run-analyze-overlay').addEventListener('click', e => {
   renderAll();
   initPrompts();
   renderPromptLibrary();
+  showConversations(null);
 })();

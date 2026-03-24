@@ -38,10 +38,10 @@
     </div>
     <div class="sb-div"></div>
     <div class="sb-lbl">Navigation</div>
-    <div class="nav-item active" data-stage="overview" onclick="showStage('overview',this)">
+    <div class="nav-item" data-stage="overview" onclick="showStage('overview',this)">
       <div class="nav-l"><div class="nav-ic">🏠</div>Overview</div>
     </div>
-    <div class="nav-item" data-stage="conversations" onclick="showConversations(this)">
+    <div class="nav-item active" data-stage="conversations" onclick="showConversations(this)">
       <div class="nav-l"><div class="nav-ic">🧠</div><span class="nav-label">Conversation Analysis</span></div>
       <span class="npill" id="pill-conversations">0</span>
     </div>
@@ -62,7 +62,7 @@
     </div>
 
     <!-- Overview -->
-    <div class="stage-blk active" id="stage-overview">
+    <div class="stage-blk" id="stage-overview">
       <div class="stage-hdr"><div>
         <div class="s-ey">Dashboard</div>
         <div class="s-ti">Overview</div>
@@ -110,13 +110,14 @@
     </div>
 
     <!-- Conversation Analysis Section -->
-    <div class="stage-blk" id="stage-conversations">
+    <div class="stage-blk active" id="stage-conversations">
       <div class="stage-hdr">
         <div>
           <div class="s-ey">🧠 Analysis</div>
           <div class="s-ti">Conversation Analysis</div>
           <div class="s-sub">AI-analyzed conversations — uses the active prompt from Prompt History</div>
         </div>
+        <button class="btn btn-g btn-sm" onclick="openPromptModal()">📝 View Prompt</button>
       </div>
       <div id="conv-list"></div>
     </div>
@@ -341,6 +342,19 @@
 </div>
 
 <div class="toasts" id="toasts"></div>
+
+<!-- ── View / Edit Prompt Modal ───────────────────────────────── -->
+<div class="add-overlay" id="prompt-modal-overlay">
+  <div class="add-modal" style="width:720px;max-width:95vw">
+    <div class="add-title">📝 Active Prompt</div>
+    <div id="prompt-modal-name" style="font-size:12px;color:var(--text3);margin-bottom:12px"></div>
+    <textarea class="pl-textarea" id="prompt-modal-ta" style="height:460px"></textarea>
+    <div class="modal-btns">
+      <button class="btn btn-g" onclick="closePromptModal()">Cancel</button>
+      <button class="btn btn-p" onclick="savePromptModal()">Save Prompt</button>
+    </div>
+  </div>
+</div>
 
 <!-- Supabase CDN + config (must load before app scripts) -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>

@@ -420,6 +420,54 @@ function _autoRerunIfConvSelected() {
   }, 400);
 }
 
+// ── PROMPT QUICK MODAL (from Conversation Analysis) ────────────────
+
+function openPromptModal() {
+  const overlay = document.getElementById('prompt-modal-overlay');
+  const ta = document.getElementById('prompt-modal-ta');
+  const nameEl = document.getElementById('prompt-modal-name');
+  if (!overlay || !ta) return;
+
+  const active = getActivePrompt();
+  if (nameEl) nameEl.textContent = active.name;
+  ta.value = active.content;
+
+  overlay.classList.add('open');
+  setTimeout(() => ta.focus(), 60);
+}
+
+function closePromptModal() {
+  const overlay = document.getElementById('prompt-modal-overlay');
+  if (overlay) overlay.classList.remove('open');
+}
+
+function savePromptModal() {
+  const ta = document.getElementById('prompt-modal-ta');
+  if (!ta) return;
+  const newContent = ta.value.trim();
+  if (!newContent) { toast('Prompt cannot be empty', 'i'); return; }
+
+  const now = new Date();
+  const label = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+    + ' ' + now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+  const newPrompt = {
+    id: 'prompt-' + Date.now(),
+    name: 'Custom Prompt — ' + label,
+    content: newContent,
+    created_at: now.toISOString(),
+    is_active: true
+  };
+
+  _prompts.forEach(p => { p.is_active = false; });
+  _prompts.push(newPrompt);
+  _savePrompts();
+  renderPromptLibrary();
+
+  closePromptModal();
+  toast('Prompt saved and activated', 'ok');
+}
+
 // ── NAVIGATION ─────────────────────────────────────────────────────
 
 function showPromptLibrary(navEl) {
