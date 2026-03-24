@@ -501,6 +501,27 @@ function promptModalSelectChange() {
   }
 }
 
+function _savePromptToHistory(content) {
+  if (!content || !content.trim()) return false;
+
+  const now = new Date();
+  const label = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+    + ' ' + now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+
+  const newPrompt = {
+    id: 'prompt-' + Date.now(),
+    name: 'Custom Prompt — ' + label,
+    content: content.trim(),
+    created_at: now.toISOString(),
+    is_active: false
+  };
+
+  _prompts.push(newPrompt);
+  _savePrompts();
+
+  return true;
+}
+
 function _saveAndActivatePrompt(content) {
   if (!content || !content.trim()) return false;
 
@@ -528,6 +549,9 @@ function runQAFromPromptModal() {
   if (!ta) return;
   const content = ta.value.trim();
   if (!content) { toast('Prompt cannot be empty', 'i'); return; }
+
+  // Save edited prompt to history (without activating)
+  _savePromptToHistory(content);
 
   if (_promptModalRunSelected && typeof runAnalysisOnSelectedConvs === 'function') {
     // Launched from "Run QA on Selected" — close modal and bulk-analyze
