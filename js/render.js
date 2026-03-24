@@ -255,47 +255,73 @@ function updatePills() {
 // ── OVERVIEW ──────────────────────────────────────────────────────
 
 function renderOverview() {
-  const total = conversations.length;
+  const tot = questions.length;
+  const res = questions.filter(q => q.resolved).length;
+  const disc = questions.filter(q => !q.resolved && q.thread.length > 0).length;
+  const pend = tot - res - disc;
 
-  // Total analyzed
+  document.getElementById('ov-total').textContent = tot;
+  document.getElementById('ov-res').textContent = res;
+  document.getElementById('ov-disc').textContent = disc;
+  document.getElementById('ov-pend').textContent = pend;
   const convEl = document.getElementById('ov-conv');
-  if (convEl) convEl.textContent = total || '0';
+  if (convEl) convEl.textContent = conversations.length;
+  document.getElementById('ov-date').textContent = new Date().toLocaleDateString('en-GB', {
+    day: 'numeric', month: 'long', year: 'numeric',
+  });
+  document.getElementById('ov-role').textContent = currentRole === 'admin' ? 'Admin' : 'Client';
 
-  // Sentiment breakdown
-  const pos = conversations.filter(c => /pos/i.test(c.sentiment)).length;
-  const neg = conversations.filter(c => /neg/i.test(c.sentiment)).length;
-  const neu = conversations.filter(c => c.sentiment && !/pos|neg/i.test(c.sentiment)).length;
+  const tbody = document.getElementById('sst-body');
+  tbody.innerHTML = '';
+  stages.forEach((st, i) => {
+    const sq = questions.filter(q => q.stage === st.id);
+    const done = sq.filter(q => q.resolved).length;
+    const pct = sq.length ? Math.round(done / sq.length * 100) : 0;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="font-weight:500">${st.emoji} Section ${i + 1} — ${esc(st.label)}</td>
+      <td style="color:var(--text2)">${done} / ${sq.length}</td>
+      <td><span style="font-size:11px;color:var(--text3)">${pct}%</span><div class="sst-mini"><div class="sst-mini-f" style="width:${pct}%"></div></div></td>
+      <td><span class="sst-go" onclick="showStage('${st.id}',null)">View →</span></td>`;
+    tbody.appendChild(tr);
+  });
 
-  const posEl = document.getElementById('ov-sent-pos');
-  const neuEl = document.getElementById('ov-sent-neu');
-  const negEl = document.getElementById('ov-sent-neg');
-  if (posEl) posEl.textContent = total ? pos : '—';
-  if (neuEl) neuEl.textContent = total ? neu : '—';
-  if (negEl) negEl.textContent = total ? neg : '—';
-
-  // Conversation Analysis banner count
+  // Update conversation analysis summary block
   const convCount = document.getElementById('ov-conv-count');
-  if (convCount) convCount.textContent = total === 0 ? 'None yet' : total + ' analyzed';
+  if (convCount) convCount.textContent = conversations.length === 0 ? 'None yet' : conversations.length + ' analyzed';
 
-  // Mobile navigation cards
+  // Mobile stage navigation cards
   const msnEl = document.getElementById('mobile-stage-nav');
   if (msnEl) {
     msnEl.innerHTML = '';
+    stages.forEach((st, i) => {
+      const sq = questions.filter(q => q.stage === st.id);
+      const done = sq.filter(q => q.resolved).length;
+      const pillClass = done === sq.length ? 'done' : done > 0 ? 'part' : '';
+      const item = document.createElement('div');
+      item.className = 'msn-item';
+      item.dataset.stage = st.id;
+      item.onclick = () => showStage(st.id, null);
+      item.innerHTML = `
+        <div class="msn-l">
+          <div class="msn-ic">${st.emoji}</div>
+          <span>Section ${i + 1} — ${esc(st.label)}</span>
+        </div>
+        <span class="msn-pill ${pillClass}">${done}/${sq.length}</span>`;
+      msnEl.appendChild(item);
+    });
 
+    // Conversation Analysis card
     const convItem = document.createElement('div');
     convItem.className = 'msn-item msn-conv';
     convItem.onclick = () => showConversations(null);
     convItem.innerHTML = `
-      <div class="msn-l"><div class="msn-ic">🧠</div><span>Conversation Analysis</span></div>
-      <span class="msn-pill ${total > 0 ? 'part' : ''}">${total}</span>`;
+      <div class="msn-l">
+        <div class="msn-ic">🧠</div>
+        <span>Conversation Analysis</span>
+      </div>
+      <span class="msn-pill ${conversations.length > 0 ? 'part' : ''}">${conversations.length}</span>`;
     msnEl.appendChild(convItem);
-
-    const promptItem = document.createElement('div');
-    promptItem.className = 'msn-item';
-    promptItem.onclick = () => showPromptLibrary(null);
-    promptItem.innerHTML = `
-      <div class="msn-l"><div class="msn-ic">📝</div><span>Prompt History</span></div>`;
-    msnEl.appendChild(promptItem);
   }
 }
 

@@ -64,40 +64,27 @@
     <!-- Overview -->
     <div class="stage-blk active" id="stage-overview">
       <div class="stage-hdr"><div>
-        <div class="s-ey">📊 Dashboard</div>
+        <div class="s-ey">Dashboard</div>
         <div class="s-ti">Overview</div>
-        <div class="s-sub">Conversation analysis at a glance</div>
+        <div class="s-sub">All sections · Chat Monitoring & Analysis</div>
       </div></div>
-
-      <!-- Stat cards — analysis only -->
-      <div class="ov-grid">
-        <div class="ov-card">
-          <div class="ov-ic">🧠</div>
-          <div class="ov-l">Total Analyzed</div>
-          <div class="ov-v" id="ov-conv" style="color:var(--accent2)">0</div>
-          <div class="ov-s">conversations</div>
+      <div class="ov-top-row">
+        <div class="ov-grid">
+          <div class="ov-card"><div class="ov-l">Total Questions</div><div class="ov-v" id="ov-total">41</div><div class="ov-s">across all sections</div></div>
+          <div class="ov-card"><div class="ov-l">Resolved</div><div class="ov-v" id="ov-res" style="color:var(--green)">—</div><div class="ov-s">marked answered</div></div>
+          <div class="ov-card"><div class="ov-l">In Discussion</div><div class="ov-v" id="ov-disc" style="color:var(--accent)">—</div><div class="ov-s">active threads</div></div>
+          <div class="ov-card"><div class="ov-l">Pending</div><div class="ov-v" id="ov-pend" style="color:var(--amber)">—</div><div class="ov-s">no replies yet</div></div>
+          <div class="ov-card"><div class="ov-l">Conversations</div><div class="ov-v" id="ov-conv" style="color:var(--accent2)">0</div><div class="ov-s">analyzed</div></div>
         </div>
-        <div class="ov-card">
-          <div class="ov-ic">😊</div>
-          <div class="ov-l">Positive</div>
-          <div class="ov-v" id="ov-sent-pos" style="color:var(--green)">—</div>
-          <div class="ov-s">sentiment</div>
-        </div>
-        <div class="ov-card">
-          <div class="ov-ic">😐</div>
-          <div class="ov-l">Neutral</div>
-          <div class="ov-v" id="ov-sent-neu" style="color:var(--accent)">—</div>
-          <div class="ov-s">sentiment</div>
-        </div>
-        <div class="ov-card">
-          <div class="ov-ic">😟</div>
-          <div class="ov-l">Negative</div>
-          <div class="ov-v" id="ov-sent-neg" style="color:var(--amber)">—</div>
-          <div class="ov-s">sentiment</div>
+        <div class="info-bx ov-meta">
+          <table>
+            <tr><td>Document</td><td>QA - AI Tool</td><td>Current Role</td><td id="ov-role">Admin</td></tr>
+            <tr><td>Prepared</td><td>March 6, 2026</td><td>Last Updated</td><td id="ov-date">—</td></tr>
+            <tr><td>Version</td><td>1.0</td><td></td><td></td></tr>
+          </table>
         </div>
       </div>
-
-      <!-- Conversation Analysis banner -->
+      <!-- Conversation Analysis summary -->
       <div class="ov-conv-block" id="ov-conv-block" onclick="showConversations(null)">
         <div class="ov-conv-left">
           <div class="ov-conv-ic">🧠</div>
@@ -112,21 +99,13 @@
         </div>
       </div>
 
-      <!-- Prompt Library banner -->
-      <div class="ov-conv-block" onclick="showPromptLibrary(null)" style="margin-top:10px">
-        <div class="ov-conv-left">
-          <div class="ov-conv-ic">📝</div>
-          <div>
-            <div class="ov-conv-title">Prompt History</div>
-            <div class="ov-conv-sub">View and manage the active AI analysis prompt</div>
-          </div>
-        </div>
-        <div class="ov-conv-right">
-          <span class="ov-conv-go">Manage →</span>
-        </div>
-      </div>
-
-      <!-- Mobile-only navigation (rendered by renderOverview) -->
+      <div class="stage-breakdown-hdr" style="font-size:13px;font-weight:600;margin-bottom:10px">Section Breakdown</div>
+      <div class="stage-breakdown-tbl info-bx"><table class="sst">
+        <colgroup><col style="width:20%"><col style="width:20%"><col style="width:50%"><col style="width:10%"></colgroup>
+        <thead><tr><th>Section</th><th>Resolved</th><th>Progress</th><th></th></tr></thead>
+        <tbody id="sst-body"></tbody>
+      </table></div>
+      <!-- Mobile-only stage navigation (rendered by renderOverview) -->
       <div id="mobile-stage-nav" class="mobile-stage-nav"></div>
     </div>
 
