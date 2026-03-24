@@ -73,10 +73,7 @@ function buildConvCard(c) {
       <div class="conv-summary">${esc(c.summary || '')}</div>
       <div class="conv-card-footer">
         <span class="conv-view-hint">${c.original_text ? '📄 Click to view & analyze' : '📄 Click to view'}</span>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn btn-g btn-sm" style="font-size:11px;padding:3px 10px" onclick="event.stopPropagation();openPromptModal({convId:'${c.id}'})">📝 View Prompt</button>
-          <button class="conv-del-btn" onclick="event.stopPropagation();deleteConversation('${c.id}')">🗑 Delete</button>
-        </div>
+        <button class="conv-del-btn" onclick="event.stopPropagation();deleteConversation('${c.id}')">🗑 Delete</button>
       </div>
     </div>`;
 
