@@ -106,7 +106,13 @@ function renderPromptLibrary() {
   const displayPrompt = viewingPrompt || activePrompt;
   const isViewingHistory = viewingPrompt && viewingPrompt.id !== activePrompt.id;
 
-  const historyPrompts = _prompts.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const historyPrompts = _prompts.slice().sort((a, b) => {
+    // Active prompt always first
+    if (a.is_active && !b.is_active) return -1;
+    if (!a.is_active && b.is_active) return 1;
+    // Then sort by date (newest first)
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
 
   let historyHTML;
   if (historyPrompts.length === 0) {
@@ -467,7 +473,13 @@ function _populatePromptModalSelect() {
   const badge = document.getElementById('prompt-modal-active-badge');
   if (!sel) return;
 
-  const sorted = _prompts.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  const sorted = _prompts.slice().sort((a, b) => {
+    // Active prompt always first
+    if (a.is_active && !b.is_active) return -1;
+    if (!a.is_active && b.is_active) return 1;
+    // Then sort by date (newest first)
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
 
   sel.innerHTML = sorted.map(p => {
     const label = p.is_active ? `✓ ${p.name} (Active)` : p.name;
