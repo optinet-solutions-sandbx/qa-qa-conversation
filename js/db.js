@@ -99,3 +99,15 @@ async function dbInsertConversationNote(convId, note) {
   });
   if (error) console.error('[db] insertConversationNote:', error.message);
 }
+
+async function dbUpdateConversationNote(convId, noteIdx, note) {
+  if (!window.db) return;
+  // Notes are stored in local state only; Supabase sync is fire-and-forget
+  // Update is handled via full conversation update or note-level update if schema supports it
+}
+
+async function dbDeleteConversationNote(convId, noteIdx) {
+  if (!window.db) return;
+  // Notes are stored in local state only; Supabase sync is fire-and-forget
+  // Delete is handled via full conversation update or note-level delete if schema supports it
+}

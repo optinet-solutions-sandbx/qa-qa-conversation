@@ -357,10 +357,15 @@ function _buildCommentsList(c) {
   }
   return userNotes.map(n => {
     const t = n.ts ? fmtTime(n.ts) : '';
-    return `<div class="conv-note">
+    const noteIdx = c.notes.indexOf(n);
+    return `<div class="conv-note" id="conv-note-${noteIdx}">
       <div class="conv-note-meta">
         <span class="conv-note-author">${esc(n.author || 'Team')}</span>
         <span class="conv-note-ts">${t}</span>
+        <div class="conv-note-actions">
+          <button class="conv-note-btn" onclick="editDetailComment('${c.id}', ${noteIdx})" title="Edit">✏</button>
+          <button class="conv-note-btn" onclick="deleteDetailComment('${c.id}', ${noteIdx})" title="Delete">🗑</button>
+        </div>
       </div>
       <div class="conv-note-text">${esc(n.text)}</div>
     </div>`;
@@ -405,6 +410,76 @@ function addDetailComment(cid) {
   if (list) list.innerHTML = _buildCommentsList(c);
   input.value = '';
   toast('Comment added', 'ok');
+}
+
+function editDetailComment(cid, noteIdx) {
+  const c = conversations.find(x => x.id === cid);
+  if (!c || !c.notes || !c.notes[noteIdx]) return;
+
+  const note = c.notes[noteIdx];
+  const noteEl = document.getElementById('conv-note-' + noteIdx);
+  if (!noteEl) return;
+
+  const originalText = note.text;
+  noteEl.innerHTML = `
+    <div class="conv-note-meta">
+      <span class="conv-note-author">${esc(note.author || 'Team')}</span>
+    </div>
+    <textarea class="conv-note-edit-ta" id="edit-ta-${noteIdx}">${esc(originalText)}</textarea>
+    <div class="conv-note-edit-actions">
+      <button class="btn btn-g btn-xs" onclick="cancelEditDetailComment('${cid}', ${noteIdx})">Cancel</button>
+      <button class="btn btn-p btn-xs" onclick="saveEditDetailComment('${cid}', ${noteIdx})">Save</button>
+    </div>`;
+
+  setTimeout(() => {
+    const ta = document.getElementById('edit-ta-' + noteIdx);
+    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  }, 30);
+}
+
+function cancelEditDetailComment(cid, noteIdx) {
+  const c = conversations.find(x => x.id === cid);
+  if (!c) return;
+
+  const list = document.getElementById('detail-comments-' + cid);
+  if (list) list.innerHTML = _buildCommentsList(c);
+}
+
+function saveEditDetailComment(cid, noteIdx) {
+  const c = conversations.find(x => x.id === cid);
+  if (!c || !c.notes || !c.notes[noteIdx]) return;
+
+  const ta = document.getElementById('edit-ta-' + noteIdx);
+  if (!ta) return;
+  const newText = ta.value.trim();
+  if (!newText) { toast('Comment cannot be empty', 'i'); return; }
+
+  const note = c.notes[noteIdx];
+  note.text = newText;
+  note.ts = new Date().toISOString();
+
+  save();
+  dbUpdateConversationNote(cid, noteIdx, note);
+
+  const list = document.getElementById('detail-comments-' + cid);
+  if (list) list.innerHTML = _buildCommentsList(c);
+  toast('Comment updated', 'ok');
+}
+
+function deleteDetailComment(cid, noteIdx) {
+  const c = conversations.find(x => x.id === cid);
+  if (!c || !c.notes || !c.notes[noteIdx]) return;
+
+  const note = c.notes[noteIdx];
+  if (!confirm(`Delete this comment?\n\n"${note.text.slice(0, 60)}${note.text.length > 60 ? '...' : ''}"\n\nThis cannot be undone.`)) return;
+
+  c.notes.splice(noteIdx, 1);
+  save();
+  dbDeleteConversationNote(cid, noteIdx);
+
+  const list = document.getElementById('detail-comments-' + cid);
+  if (list) list.innerHTML = _buildCommentsList(c);
+  toast('Comment deleted', 'i');
 }
 
 // ── HELPERS ────────────────────────────────────────────────────────

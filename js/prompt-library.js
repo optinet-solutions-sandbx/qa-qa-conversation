@@ -529,9 +529,6 @@ function runQAFromPromptModal() {
   const content = ta.value.trim();
   if (!content) { toast('Prompt cannot be empty', 'i'); return; }
 
-  // Auto-save and activate the edited prompt
-  _saveAndActivatePrompt(content);
-
   if (_promptModalRunSelected && typeof runAnalysisOnSelectedConvs === 'function') {
     // Launched from "Run QA on Selected" — close modal and bulk-analyze
     closePromptModal();

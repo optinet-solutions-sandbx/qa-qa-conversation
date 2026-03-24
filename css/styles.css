@@ -522,6 +522,16 @@ main{margin-left:var(--sw);flex:1;padding:32px 40px}
 .conv-note-input:focus{border-color:var(--accent)}
 .conv-note-btn{background:var(--accent);color:#fff;border:none;border-radius:7px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;transition:background .15s}
 .conv-note-btn:hover{background:#3d7de8}
+.conv-note-actions{display:flex;gap:6px;margin-left:auto;flex-shrink:0}
+.conv-note-actions button{background:rgba(79,142,247,.12);color:var(--accent);border:1px solid rgba(79,142,247,.25);padding:4px 8px;border-radius:5px;font-size:11px;cursor:pointer;transition:all .15s}
+.conv-note-actions button:hover{background:rgba(79,142,247,.2)}
+.conv-note-edit-ta{width:100%;background:var(--bg4);border:1px solid var(--accent);border-radius:7px;padding:8px 11px;font-size:13px;color:var(--text);font-family:inherit;outline:none;resize:vertical;min-height:80px;margin-bottom:8px}
+.conv-note-edit-ta:focus{border-color:var(--accent)}
+.conv-note-edit-actions{display:flex;gap:8px;justify-content:flex-end}
+.btn-xs{background:var(--accent);color:#fff;border:none;border-radius:5px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;transition:background .15s}
+.btn-xs:hover{background:#3d7de8}
+.btn-xs.btn-g{background:rgba(79,142,247,.12);color:var(--accent);border:1px solid rgba(79,142,247,.25)}
+.btn-xs.btn-g:hover{background:rgba(79,142,247,.2)}
 .conv-card-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
 .conv-del-btn{background:rgba(239,68,68,.08);color:var(--red);border:1px solid rgba(239,68,68,.2);font-size:11px;font-weight:600;padding:5px 10px;border-radius:7px;cursor:pointer;transition:all .15s}
 .conv-del-btn:hover{background:rgba(239,68,68,.18)}
