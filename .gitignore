@@ -3,3 +3,4 @@ package-lock.json
 *.pdf
 *.md
 .env
+config.js
