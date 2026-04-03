@@ -87,26 +87,6 @@ export default function AnalysisResultView({ result }: Props) {
               )
             }
           />
-          {result.conversation_id && (
-            <Row label="Conversation ID" value={result.conversation_id} />
-          )}
-          {result.player_id && <Row label="Player ID" value={result.player_id} />}
-          {result.agent_name && <Row label="Agent" value={result.agent_name} />}
-          {result.intercom_link && (
-            <Row
-              label="Intercom Link"
-              value={
-                <a
-                  href={result.intercom_link}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-blue-500 underline text-xs"
-                >
-                  Open in Intercom
-                </a>
-              }
-            />
-          )}
         </tbody>
       </table>
     </div>

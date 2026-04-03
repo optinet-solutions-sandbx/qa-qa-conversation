@@ -6,6 +6,10 @@ import {
   dbInsertNote,
   dbUpdateNote,
   dbDeleteNote,
+  dbInsertPrompt,
+  dbUpdatePrompt,
+  dbDeletePrompt,
+  dbActivatePrompt,
   loadFromSupabase,
 } from '@/lib/db';
 
@@ -25,6 +29,10 @@ export async function POST(req: Request) {
     case 'insertNote':          await dbInsertNote(payload.convId, payload.note); break;
     case 'updateNote':          await dbUpdateNote(payload); break;
     case 'deleteNote':          await dbDeleteNote(payload.id); break;
+    case 'insertPrompt':        await dbInsertPrompt(payload); break;
+    case 'updatePrompt':        await dbUpdatePrompt(payload); break;
+    case 'deletePrompt':        await dbDeletePrompt(payload.id); break;
+    case 'activatePrompt':      await dbActivatePrompt(payload.id); break;
     default:
       return NextResponse.json({ error: 'Unknown action' }, { status: 400 });
   }

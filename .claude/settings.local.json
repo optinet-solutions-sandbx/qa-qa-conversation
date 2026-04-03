@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:community.intercom.com)"
+    ],
+    "additionalDirectories": [
+      "c:\\Users\\Chris-Optinet\\ai-chat-qa-tool\\app\\conversations"
+    ]
+  }
+}
