@@ -89,7 +89,7 @@ function CollapsiblePanel({
       </div>
 
       {/* Body */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4">
+      <div className="flex-1 min-h-0 overflow-y-auto p-4 min-h-[180px] lg:min-h-0">
         {children}
       </div>
     </div>
@@ -108,9 +108,9 @@ function Badge({ label }: { label: string }) {
 
 function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   return (
-    <div className="flex gap-3 py-2 border-b border-slate-50 last:border-0">
-      <span className="text-[11px] text-slate-400 w-28 shrink-0 pt-0.5">{label}</span>
-      <span className="text-[11px] text-slate-700 flex-1 break-all">
+    <div className="flex gap-3 py-2 border-b border-slate-50 last:border-0 min-w-0">
+      <span className="text-[11px] text-slate-400 w-24 shrink-0 pt-0.5 leading-snug">{label}</span>
+      <span className="text-[11px] text-slate-700 flex-1 min-w-0 break-words leading-snug">
         {value ?? <span className="text-slate-300">—</span>}
       </span>
     </div>
@@ -470,9 +470,9 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
   );
 
   const transcriptContent = (
-    <div>
+    <div className="min-w-0">
       {conv.original_text ? (
-        <pre className="text-xs text-slate-700 whitespace-pre-wrap font-sans leading-relaxed">
+        <pre className="text-xs text-slate-700 whitespace-pre-wrap font-sans leading-relaxed break-words min-w-0 w-full">
           {conv.original_text}
         </pre>
       ) : (
@@ -650,21 +650,44 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
 
       <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
         {/* Page header */}
-        <div className="flex items-center gap-2 px-4 sm:px-6 py-3.5 bg-white border-b border-slate-200 flex-shrink-0 flex-wrap">
-          <button
-            onClick={() => router.back()}
-            className="flex items-center gap-1.5 text-slate-500 hover:text-slate-800 transition-colors text-sm font-medium"
-          >
-            <IconArrowLeft />
-            <span className="hidden sm:inline">Back</span>
-          </button>
-          <div className="w-px h-4 bg-slate-200" />
-          <div className="flex-1 min-w-0">
-            <h1 className="font-semibold text-slate-900 text-sm truncate">{conv.title}</h1>
+        <div className="bg-white border-b border-slate-200 flex-shrink-0">
+          {/* Row 1: back · title · actions */}
+          <div className="flex items-center gap-2 px-4 sm:px-6 py-3 min-w-0">
+            <button
+              onClick={() => router.back()}
+              className="flex items-center gap-1 text-slate-400 hover:text-slate-700 transition-colors shrink-0"
+            >
+              <IconArrowLeft />
+            </button>
+            <div className="w-px h-4 bg-slate-200 shrink-0" />
+            <h1 className="flex-1 min-w-0 font-semibold text-slate-900 text-sm truncate">{conv.title}</h1>
+
+            {!readOnly && (
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={handleRunQA}
+                  disabled={isAnalyzing || !conv.intercom_id}
+                  className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors whitespace-nowrap"
+                  title={!conv.intercom_id ? 'No Intercom ID for this conversation' : 'Run QA analysis'}
+                >
+                  {isAnalyzing
+                    ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    : <IconPlay />}
+                  <span>{isAnalyzing ? 'Analyzing…' : 'Run QA'}</span>
+                </button>
+                <button
+                  onClick={handleDelete}
+                  className="flex items-center gap-1 text-red-400 hover:text-red-600 transition-colors p-1.5 rounded-lg hover:bg-red-50"
+                  title="Delete conversation"
+                >
+                  <IconTrash />
+                </button>
+              </div>
+            )}
           </div>
 
-          {/* Panel toggles — all 6 */}
-          <div className="flex items-center gap-1.5 flex-wrap">
+          {/* Row 2: panel toggles — horizontally scrollable, no wrap */}
+          <div className="flex items-center gap-1.5 px-4 sm:px-6 pb-2.5 overflow-x-auto">
             {(['transcript', 'prompt', 'analysis', 'player', 'conversation', 'notes'] as PanelId[]).map((id) => {
               const labels: Record<PanelId, string> = { transcript: 'Transcript', prompt: 'Prompt', analysis: 'Analysis', player: 'Player', conversation: 'Conversation', notes: 'Notes' };
               const on = shownPanels.has(id);
@@ -673,7 +696,7 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
                   key={id}
                   onClick={() => togglePanel(id)}
                   className={[
-                    'text-xs font-medium px-2.5 py-1 rounded-full transition-colors',
+                    'text-[11px] font-medium px-2.5 py-1 rounded-full transition-colors whitespace-nowrap shrink-0',
                     on ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-500 hover:bg-slate-200',
                   ].join(' ')}
                 >
@@ -682,41 +705,18 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
               );
             })}
           </div>
-
-          {!readOnly && (
-            <>
-              <div className="w-px h-4 bg-slate-200" />
-
-              {/* Run QA */}
-              <button
-                onClick={handleRunQA}
-                disabled={isAnalyzing || !conv.intercom_id}
-                className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-sm font-medium px-3 py-1.5 rounded-lg transition-colors"
-                title={!conv.intercom_id ? 'No Intercom ID for this conversation' : 'Run QA analysis'}
-              >
-                {isAnalyzing ? (
-                  <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                ) : (
-                  <IconPlay />
-                )}
-                <span className="hidden sm:inline">{isAnalyzing ? 'Analyzing…' : 'Run QA'}</span>
-              </button>
-
-              {/* Delete */}
-              <button
-                onClick={handleDelete}
-                className="flex items-center gap-1.5 text-red-500 hover:text-red-700 transition-colors text-sm font-medium px-2.5 py-1.5 rounded-lg hover:bg-red-50"
-              >
-                <IconTrash />
-                <span className="hidden sm:inline">Delete</span>
-              </button>
-            </>
-          )}
         </div>
 
         {/* Panel grid */}
-        <div className="flex-1 min-h-0 overflow-hidden p-4 sm:p-5">
-          <div className={`grid gap-3 h-full ${{ 0:'grid-cols-1',1:'grid-cols-1',2:'grid-cols-2',3:'grid-cols-3',4:'grid-cols-4',5:'grid-cols-5',6:'grid-cols-6' }[shownPanels.size] ?? 'grid-cols-3'}`}>
+        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4">
+          <div className={[
+            'grid gap-3 h-full',
+            shownPanels.size <= 1 ? 'grid-cols-1' :
+            shownPanels.size === 2 ? 'grid-cols-1 md:grid-cols-2' :
+            shownPanels.size === 3 ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3' :
+            shownPanels.size === 4 ? 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-4' :
+            'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
+          ].join(' ')}>
             {shownPanels.has('transcript') && (
               <CollapsiblePanel title="Transcript" isOpen onToggle={() => {}} onFullscreen={() => expandPanel('transcript')}>
                 {transcriptContent}

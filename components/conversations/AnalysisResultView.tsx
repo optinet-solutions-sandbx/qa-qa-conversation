@@ -75,7 +75,7 @@ function ArrayValue({ items }: { items: unknown[] }) {
             {rows.map((row, i) => (
               <tr key={i}>
                 {keys.map((k) => (
-                  <td key={k} className="px-3 py-2 text-slate-700">
+                  <td key={k} className="px-3 py-2 text-slate-700 break-words min-w-0 max-w-[200px]">
                     <PrimitiveValue value={row[k] as string | number | boolean | null} />
                   </td>
                 ))}
@@ -161,7 +161,7 @@ export default function AnalysisResultView({ result }: Props) {
 
   if (parsed) {
     return (
-      <div className="bg-white rounded-xl border border-slate-200 px-5 py-1">
+      <div className="bg-white rounded-xl border border-slate-200 px-4 py-1 overflow-hidden min-w-0">
         <JsonTable data={parsed} />
       </div>
     );
