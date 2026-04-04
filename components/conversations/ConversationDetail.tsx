@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import type { Conversation, ConversationNote, PromptVersion, AnalysisResult, AnalysisRun } from '@/lib/types';
 import { useStore } from '@/lib/store';
@@ -89,7 +89,7 @@ function CollapsiblePanel({
       </div>
 
       {/* Body */}
-      <div className="flex-1 min-h-0 overflow-y-auto p-4 min-h-[180px] lg:min-h-0">
+      <div className="flex-1 min-h-0 overflow-y-auto overflow-x-auto p-4 min-h-[180px] lg:min-h-0">
         {children}
       </div>
     </div>
@@ -122,6 +122,19 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
     <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2 mt-4 first:mt-0">
       {children}
     </h4>
+  );
+}
+
+// ── ResizeHandle ──────────────────────────────────────────────────────────────
+
+function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
+  return (
+    <div
+      className="hidden lg:flex w-3 shrink-0 cursor-col-resize items-stretch justify-center group select-none"
+      onMouseDown={onMouseDown}
+    >
+      <div className="w-0.5 bg-slate-200 group-hover:bg-blue-400 transition-colors rounded-full" />
+    </div>
   );
 }
 
@@ -167,7 +180,9 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
 
   const conv = conversation;
 
-  // ── Panel visibility — all panels toggled from header pills ──────────────
+  // ── Panel visibility ───────────────────────────────────────────────────────
+  const PANEL_ORDER: PanelId[] = ['transcript', 'prompt', 'analysis', 'player', 'conversation', 'notes'];
+
   const [shownPanels, setShownPanels] = useState<Set<PanelId>>(
     new Set(['transcript', 'prompt', 'analysis'])
   );
@@ -182,6 +197,44 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
   };
 
   const expandPanel = (id: PanelId) => setFullscreen(id);
+
+  // ── Panel widths (resize) ─────────────────────────────────────────────────
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [panelWidths, setPanelWidths] = useState<Record<string, number>>({});
+
+  // Reset to equal widths whenever the shown set changes
+  useEffect(() => {
+    const visible = PANEL_ORDER.filter((id) => shownPanels.has(id));
+    if (visible.length === 0) return;
+    const equal = 100 / visible.length;
+    setPanelWidths(Object.fromEntries(visible.map((id) => [id, equal])));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownPanels]);
+
+  const startResize = (leftId: PanelId, rightId: PanelId) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    let lastX = e.clientX;
+
+    const onMove = (ev: MouseEvent) => {
+      const dx = ev.clientX - lastX;
+      lastX = ev.clientX;
+      const totalW = containerRef.current?.offsetWidth ?? 800;
+      const dPct = (dx / totalW) * 100;
+      setPanelWidths((prev) => ({
+        ...prev,
+        [leftId]: Math.max(8, (prev[leftId] ?? 0) + dPct),
+        [rightId]: Math.max(8, (prev[rightId] ?? 0) - dPct),
+      }));
+    };
+
+    const onUp = () => {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
 
   // ── Notes state ────────────────────────────────────────────────────────────
   const [notes, setNotes] = useState<ConversationNote[]>(conversation.notes);
@@ -707,46 +760,47 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
           </div>
         </div>
 
-        {/* Panel grid */}
-        <div className="flex-1 min-h-0 overflow-y-auto p-3 sm:p-4">
-          <div className={[
-            'grid gap-3 h-full',
-            shownPanels.size <= 1 ? 'grid-cols-1' :
-            shownPanels.size === 2 ? 'grid-cols-1 md:grid-cols-2' :
-            shownPanels.size === 3 ? 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3' :
-            shownPanels.size === 4 ? 'grid-cols-1 sm:grid-cols-2 xl:grid-cols-4' :
-            'grid-cols-1 sm:grid-cols-2 lg:grid-cols-3',
-          ].join(' ')}>
-            {shownPanels.has('transcript') && (
-              <CollapsiblePanel title="Transcript" isOpen onToggle={() => {}} onFullscreen={() => expandPanel('transcript')}>
-                {transcriptContent}
-              </CollapsiblePanel>
-            )}
-            {shownPanels.has('prompt') && (
-              <CollapsiblePanel title="Prompt" isOpen onToggle={() => {}} onFullscreen={() => expandPanel('prompt')} headerAction={promptPickerAction}>
-                {promptContent_}
-              </CollapsiblePanel>
-            )}
-            {shownPanels.has('analysis') && (
-              <CollapsiblePanel title="Analysis" isOpen onToggle={() => {}} onFullscreen={() => expandPanel('analysis')} badge={analysisBadge}>
-                {analysisContent}
-              </CollapsiblePanel>
-            )}
-            {shownPanels.has('player') && (
-              <CollapsiblePanel title="Player" isOpen onToggle={() => {}} onFullscreen={() => expandPanel('player')}>
-                {playerContent}
-              </CollapsiblePanel>
-            )}
-            {shownPanels.has('conversation') && (
-              <CollapsiblePanel title="Conversation" isOpen onToggle={() => {}} onFullscreen={() => expandPanel('conversation')}>
-                {conversationContent}
-              </CollapsiblePanel>
-            )}
-            {shownPanels.has('notes') && (
-              <CollapsiblePanel title="Notes" isOpen onToggle={() => {}} onFullscreen={() => expandPanel('notes')} badge={notes.length > 0 ? <span className="text-[10px] bg-slate-100 text-slate-500 rounded-full px-1.5 py-0.5 font-medium">{notes.length}</span> : undefined}>
-                {notesContent}
-              </CollapsiblePanel>
-            )}
+        {/* Panel layout — stacked on mobile, resizable flex row on desktop */}
+        <div className="flex-1 min-h-0 overflow-y-auto lg:overflow-hidden p-3 sm:p-4">
+          <div
+            ref={containerRef}
+            className="flex flex-col lg:flex-row gap-3 lg:gap-0 h-full"
+          >
+            {PANEL_ORDER.filter((id) => shownPanels.has(id)).map((id, i, visible) => {
+              const panelProps: Record<PanelId, { title: string; badge?: React.ReactNode; headerAction?: React.ReactNode }> = {
+                transcript:   { title: 'Transcript' },
+                prompt:       { title: 'Prompt', headerAction: promptPickerAction },
+                analysis:     { title: 'Analysis', badge: analysisBadge },
+                player:       { title: 'Player' },
+                conversation: { title: 'Conversation' },
+                notes:        { title: 'Notes', badge: notes.length > 0 ? <span className="text-[10px] bg-slate-100 text-slate-500 rounded-full px-1.5 py-0.5 font-medium">{notes.length}</span> : undefined },
+              };
+              const { title, badge, headerAction } = panelProps[id];
+              const widthPct = panelWidths[id] ?? 100 / visible.length;
+
+              return (
+                <React.Fragment key={id}>
+                  {i > 0 && (
+                    <ResizeHandle onMouseDown={startResize(visible[i - 1], id)} />
+                  )}
+                  <div
+                    className="min-w-0 flex-shrink-0 lg:flex-shrink lg:flex-grow-0 min-h-[200px] lg:min-h-0 w-full lg:w-auto"
+                    style={{ flexBasis: `${widthPct}%` }}
+                  >
+                    <CollapsiblePanel
+                      title={title}
+                      isOpen
+                      onToggle={() => {}}
+                      onFullscreen={() => expandPanel(id)}
+                      badge={badge}
+                      headerAction={headerAction}
+                    >
+                      {PANELS[id].content}
+                    </CollapsiblePanel>
+                  </div>
+                </React.Fragment>
+              );
+            })}
           </div>
         </div>
       </div>
