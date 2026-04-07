@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import type { IntercomSearchItem } from '@/lib/intercom';
 
@@ -91,6 +91,8 @@ export default function CollectPage() {
   const [error, setError] = useState<string | null>(null);
   const [hasFetched, setHasFetched] = useState(false);
   const [collectingAll, setCollectingAll] = useState(false);
+  const [collectProgress, setCollectProgress] = useState<{ done: number; total: number } | null>(null);
+  const collectAbortRef = useRef<AbortController | null>(null);
 
   // ── Fetch list from Intercom ────────────────────────────────────────────
 
@@ -135,17 +137,29 @@ export default function CollectPage() {
     }
   };
 
+  // ── Cancel collect ──────────────────────────────────────────────────────
+
+  const cancelCollect = () => {
+    collectAbortRef.current?.abort();
+  };
+
   // ── Collect all new ─────────────────────────────────────────────────────
 
   const collectAllNew = async () => {
-    // Fetch ALL pages first to get all new IDs
+    const controller = new AbortController();
+    collectAbortRef.current = controller;
+    const { signal } = controller;
+
     setCollectingAll(true);
+    setCollectProgress(null);
+
     try {
-      // Collect all pages
+      // Gather all new IDs across all pages
       let allNew: string[] = [];
       const pageCount = Math.ceil(total / PER_PAGE);
       for (let p = 0; p < pageCount; p++) {
-        const res = await fetch(`/api/collect?date=${date}&page=${p}&perPage=${PER_PAGE}`);
+        if (signal.aborted) break;
+        const res = await fetch(`/api/collect?date=${date}&page=${p}&perPage=${PER_PAGE}`, { signal });
         const data = await res.json();
         const newIds = (data.conversations as (IntercomSearchItem & { is_existing: boolean })[])
           .filter((c) => !c.is_existing)
@@ -153,19 +167,28 @@ export default function CollectPage() {
         allNew = [...allNew, ...newIds];
       }
 
-      if (allNew.length === 0) return;
+      if (signal.aborted || allNew.length === 0) return;
+
+      setCollectProgress({ done: 0, total: allNew.length });
 
       // Mark visible new rows as saving
       setRows((prev) => prev.map((r) => allNew.includes(r.intercom_id) ? { ...r, _status: 'saving' } : r));
 
-      // Send in batches of 5 to avoid overwhelming the API
+      // Send in batches of 5
       const BATCH = 5;
+      let done = 0;
       for (let i = 0; i < allNew.length; i += BATCH) {
+        if (signal.aborted) {
+          // Reset rows still in 'saving' back to 'idle'
+          setRows((prev) => prev.map((r) => r._status === 'saving' ? { ...r, _status: 'idle' } : r));
+          break;
+        }
         const batch = allNew.slice(i, i + BATCH);
         const res = await fetch('/api/collect', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ intercomIds: batch }),
+          signal,
         });
         const data = await res.json();
         for (const result of data.results ?? []) {
@@ -174,9 +197,19 @@ export default function CollectPage() {
             : r
           ));
         }
+        done += batch.length;
+        setCollectProgress({ done, total: allNew.length });
       }
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') {
+        setError((e as Error).message);
+      }
+      // On abort, reset any rows stuck in saving
+      setRows((prev) => prev.map((r) => r._status === 'saving' ? { ...r, _status: 'idle' } : r));
     } finally {
       setCollectingAll(false);
+      setCollectProgress(null);
+      collectAbortRef.current = null;
     }
   };
 
@@ -212,17 +245,39 @@ export default function CollectPage() {
               {loading ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" /> : <IconSearch />}
               {loading ? 'Fetching…' : 'Fetch'}
             </button>
-            {hasFetched && newCount > 0 && (
+            {hasFetched && !collectingAll && newCount > 0 && (
               <button
                 onClick={collectAllNew}
-                disabled={collectingAll}
-                className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
+                className="inline-flex items-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition-colors"
               >
-                {collectingAll
-                  ? <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                  : <IconDownload />}
-                {collectingAll ? 'Collecting…' : `Collect All New (${newCount})`}
+                <IconDownload />
+                Collect All New ({newCount})
               </button>
+            )}
+            {collectingAll && (
+              <div className="inline-flex items-center gap-2">
+                {collectProgress && (
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-24 h-1.5 bg-slate-200 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-blue-500 rounded-full transition-all duration-300"
+                        style={{ width: `${Math.round((collectProgress.done / collectProgress.total) * 100)}%` }}
+                      />
+                    </div>
+                    <span className="text-xs text-slate-500 tabular-nums">{collectProgress.done}/{collectProgress.total}</span>
+                  </div>
+                )}
+                <span className="inline-flex items-center gap-1.5 text-xs text-slate-500">
+                  <span className="w-3.5 h-3.5 border-2 border-blue-400 border-t-transparent rounded-full animate-spin" />
+                  Collecting…
+                </span>
+                <button
+                  onClick={cancelCollect}
+                  className="text-xs font-medium text-red-500 hover:text-red-700 px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
             )}
           </div>
         </div>
