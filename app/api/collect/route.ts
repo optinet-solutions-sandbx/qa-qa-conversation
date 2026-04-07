@@ -1,39 +1,31 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { searchConversationsByDate, fetchIntercomData } from '@/lib/intercom';
-import { getExistingIntercomIds, dbInsertConversation, dbUpdateConversation } from '@/lib/db';
+import { fetchIntercomData } from '@/lib/intercom';
+import { loadConversationsByDate, dbInsertConversation, dbUpdateConversation, getExistingIntercomIds } from '@/lib/db';
 import { generateId } from '@/lib/utils';
 import type { Conversation } from '@/lib/types';
 
-// ── GET: search Intercom for a date, mark which are already in DB ──────────
+// ── GET: load conversations from DB by date ────────────────────────────────
 
 export async function GET(req: NextRequest) {
-  const apiKey = process.env.INTERCOM_API_KEY;
-  if (!apiKey) return NextResponse.json({ error: 'INTERCOM_API_KEY not configured' }, { status: 500 });
+  const date    = req.nextUrl.searchParams.get('date');
+  const page    = parseInt(req.nextUrl.searchParams.get('page')    ?? '0',  10);
+  const perPage = parseInt(req.nextUrl.searchParams.get('perPage') ?? '25', 10);
+  const search  = req.nextUrl.searchParams.get('search') ?? '';
 
-  const date = req.nextUrl.searchParams.get('date');
   if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return NextResponse.json({ error: 'date param required (YYYY-MM-DD)' }, { status: 400 });
   }
 
-  const page    = parseInt(req.nextUrl.searchParams.get('page')    ?? '0', 10);
-  const perPage = parseInt(req.nextUrl.searchParams.get('perPage') ?? '25', 10);
-
   try {
-    const all = await searchConversationsByDate(date, apiKey);
-    const existingIds = await getExistingIntercomIds(all.map((c) => c.intercom_id));
-
-    const annotated = all.map((c) => ({ ...c, is_existing: existingIds.has(c.intercom_id) }));
-    const total = annotated.length;
-    const slice = annotated.slice(page * perPage, page * perPage + perPage);
-
-    return NextResponse.json({ conversations: slice, total, page, perPage });
+    const { conversations, total } = await loadConversationsByDate(date, page, perPage, search);
+    return NextResponse.json({ conversations, total, page, perPage });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
 }
 
-// ── POST: full-fetch + save a batch of conversations ──────────────────────
+// ── POST: full-fetch + save a batch of conversations from Intercom ─────────
 
 export async function POST(req: NextRequest) {
   const apiKey = process.env.INTERCOM_API_KEY;
@@ -106,7 +98,6 @@ export async function POST(req: NextRequest) {
         original_text: data.transcript,
         notes: [],
 
-        // Analysis fields — empty until QA is run
         sentiment: null,
         summary: null,
         dissatisfaction_severity: null,

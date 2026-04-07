@@ -9,12 +9,21 @@ interface Props {
   selected: boolean;
   onToggleSelect: () => void;
   onClick: () => void;
+  onDelete?: (e: React.MouseEvent) => void;
 }
 
 function IconCheck() {
   return (
     <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+    </svg>
+  );
+}
+
+function IconTrash() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" />
     </svg>
   );
 }
@@ -63,7 +72,7 @@ function RatingScore({ score }: { score: number }) {
   );
 }
 
-export default function ConversationCard({ conversation: c, selectMode, selected, onToggleSelect, onClick }: Props) {
+export default function ConversationCard({ conversation: c, selectMode, selected, onToggleSelect, onClick, onDelete }: Props) {
   const handleClick = () => {
     if (selectMode) onToggleSelect();
     else onClick();
@@ -74,7 +83,7 @@ export default function ConversationCard({ conversation: c, selectMode, selected
   return (
     <div
       className={[
-        'relative bg-white rounded-xl border cursor-pointer transition-all duration-150',
+        'relative group bg-white rounded-xl border cursor-pointer transition-all duration-150',
         accentClass(c),
         selected
           ? 'border-blue-400 ring-2 ring-blue-100 shadow-sm'
@@ -84,6 +93,17 @@ export default function ConversationCard({ conversation: c, selectMode, selected
       ].join(' ')}
       onClick={handleClick}
     >
+      {/* Delete button — visible on hover, hidden in select mode */}
+      {!selectMode && onDelete && (
+        <button
+          onClick={onDelete}
+          className="absolute top-2.5 right-2.5 w-6 h-6 rounded-md flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-red-500 hover:bg-red-50"
+          title="Delete conversation"
+        >
+          <IconTrash />
+        </button>
+      )}
+
       {/* Selection indicator */}
       {selectMode && (
         <div className={[

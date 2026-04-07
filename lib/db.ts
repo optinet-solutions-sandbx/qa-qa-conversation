@@ -1,5 +1,70 @@
 import { supabase } from './supabase';
 import type { Conversation, ConversationNote, PromptVersion, AnalysisRun } from './types';
+import { cestDateToUnixRange } from './intercom';
+
+// ── Shared row mapper ──────────────────────────────────────────────────────
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapConversationRow(c: Record<string, any>, notes: ConversationNote[] = []): Conversation {
+  return {
+    id: c.id,
+    title: c.title,
+    analyzed_at: c.analyzed_at ?? new Date().toISOString(),
+    intercom_id: c.intercom_id ?? null,
+    intercom_created_at: c.intercom_created_at ?? null,
+    player_name: c.player_name ?? null,
+    player_email: c.player_email ?? null,
+    player_id: c.player_id ?? null,
+    player_external_id: c.player_external_id ?? null,
+    player_phone: c.player_phone ?? null,
+    player_tags: c.player_tags ?? [],
+    player_signed_up_at: c.player_signed_up_at ?? null,
+    player_last_seen_at: c.player_last_seen_at ?? null,
+    player_last_replied_at: c.player_last_replied_at ?? null,
+    player_last_contacted_at: c.player_last_contacted_at ?? null,
+    player_country: c.player_country ?? null,
+    player_city: c.player_city ?? null,
+    player_browser: c.player_browser ?? null,
+    player_os: c.player_os ?? null,
+    player_custom_attributes: c.player_custom_attributes ?? null,
+    player_companies: c.player_companies ?? [],
+    player_segments: c.player_segments ?? [],
+    player_event_summaries: c.player_event_summaries ?? [],
+    agent_name: c.agent_name ?? null,
+    agent_email: c.agent_email ?? null,
+    is_bot_handled: c.is_bot_handled ?? false,
+    brand: c.brand ?? null,
+    tags: c.tags ?? [],
+    query_type: c.query_type ?? null,
+    ai_subject: c.ai_subject ?? null,
+    ai_issue_summary: c.ai_issue_summary ?? null,
+    cx_score_rating: c.cx_score_rating ?? null,
+    cx_score_explanation: c.cx_score_explanation ?? null,
+    conversation_rating_score: c.conversation_rating_score ?? null,
+    conversation_rating_remark: c.conversation_rating_remark ?? null,
+    time_to_assignment: c.time_to_assignment ?? null,
+    time_to_admin_reply: c.time_to_admin_reply ?? null,
+    time_to_first_close: c.time_to_first_close ?? null,
+    median_time_to_reply: c.median_time_to_reply ?? null,
+    count_reopens: c.count_reopens ?? null,
+    sentiment: c.sentiment ?? null,
+    summary: c.summary ?? null,
+    dissatisfaction_severity: c.dissatisfaction_severity ?? null,
+    issue_category: c.issue_category ?? null,
+    resolution_status: c.resolution_status ?? null,
+    language: c.language ?? null,
+    agent_performance_score: c.agent_performance_score ?? null,
+    agent_performance_notes: c.agent_performance_notes ?? null,
+    key_quotes: c.key_quotes ?? null,
+    recommended_action: c.recommended_action ?? null,
+    is_alert_worthy: c.is_alert_worthy ?? false,
+    alert_reason: c.alert_reason ?? null,
+    original_text: c.original_text ?? null,
+    last_prompt_id: c.last_prompt_id ?? null,
+    last_prompt_content: c.last_prompt_content ?? null,
+    notes,
+  };
+}
 
 // ── Conversations ──────────────────────────────────────────────────────────
 
@@ -216,6 +281,38 @@ export async function loadAnalysisRuns(page = 0, perPage = 25): Promise<{ runs: 
   return { runs: (data ?? []) as AnalysisRun[], total: count ?? 0 };
 }
 
+export async function loadConversationsByDate(
+  date: string,
+  page = 0,
+  perPage = 25,
+  search = '',
+): Promise<{ conversations: Conversation[]; total: number }> {
+  const [startUnix, endUnix] = cestDateToUnixRange(date);
+  const startISO = new Date(startUnix * 1000).toISOString();
+  const endISO   = new Date(endUnix   * 1000).toISOString();
+
+  let query = supabase
+    .from('conversations')
+    .select('*', { count: 'exact' })
+    .gte('intercom_created_at', startISO)
+    .lte('intercom_created_at', endISO)
+    .order('intercom_created_at', { ascending: false })
+    .range(page * perPage, page * perPage + perPage - 1);
+
+  if (search.trim()) {
+    query = query.or(
+      `player_name.ilike.%${search}%,brand.ilike.%${search}%,query_type.ilike.%${search}%,title.ilike.%${search}%,player_email.ilike.%${search}%`
+    );
+  }
+
+  const { data, error, count } = await query;
+  if (error) throw new Error(`[db] loadConversationsByDate: ${error.message}`);
+  return {
+    conversations: (data ?? []).map((c) => mapConversationRow(c)),
+    total: count ?? 0,
+  };
+}
+
 export async function loadAnalysisRun(id: string): Promise<AnalysisRun | null> {
   const { data, error } = await supabase
     .from('analysis_runs')
@@ -238,84 +335,14 @@ export async function loadFromSupabase(): Promise<{ conversations: Conversation[
 
     if (cRes.error) throw cRes.error;
 
-    const conversations: Conversation[] = (cRes.data ?? []).map((c) => ({
-      id: c.id,
-      title: c.title,
-      analyzed_at: c.analyzed_at ?? new Date().toISOString(),
+    const rawNotes = cnRes.error ? [] : (cnRes.data ?? []);
 
-      intercom_id: c.intercom_id ?? null,
-      intercom_created_at: c.intercom_created_at ?? null,
-
-      player_name: c.player_name ?? null,
-      player_email: c.player_email ?? null,
-      player_id: c.player_id ?? null,
-      player_external_id: c.player_external_id ?? null,
-      player_phone: c.player_phone ?? null,
-      player_tags: c.player_tags ?? [],
-
-      player_signed_up_at: c.player_signed_up_at ?? null,
-      player_last_seen_at: c.player_last_seen_at ?? null,
-      player_last_replied_at: c.player_last_replied_at ?? null,
-      player_last_contacted_at: c.player_last_contacted_at ?? null,
-
-      player_country: c.player_country ?? null,
-      player_city: c.player_city ?? null,
-      player_browser: c.player_browser ?? null,
-      player_os: c.player_os ?? null,
-
-      player_custom_attributes: c.player_custom_attributes ?? null,
-      player_companies: c.player_companies ?? [],
-      player_segments: c.player_segments ?? [],
-      player_event_summaries: c.player_event_summaries ?? [],
-
-      agent_name: c.agent_name ?? null,
-      agent_email: c.agent_email ?? null,
-      is_bot_handled: c.is_bot_handled ?? false,
-
-      brand: c.brand ?? null,
-      tags: c.tags ?? [],
-      query_type: c.query_type ?? null,
-      ai_subject: c.ai_subject ?? null,
-      ai_issue_summary: c.ai_issue_summary ?? null,
-      cx_score_rating: c.cx_score_rating ?? null,
-      cx_score_explanation: c.cx_score_explanation ?? null,
-      conversation_rating_score: c.conversation_rating_score ?? null,
-      conversation_rating_remark: c.conversation_rating_remark ?? null,
-
-      time_to_assignment: c.time_to_assignment ?? null,
-      time_to_admin_reply: c.time_to_admin_reply ?? null,
-      time_to_first_close: c.time_to_first_close ?? null,
-      median_time_to_reply: c.median_time_to_reply ?? null,
-      count_reopens: c.count_reopens ?? null,
-
-      sentiment: c.sentiment ?? null,
-      summary: c.summary ?? null,
-      dissatisfaction_severity: c.dissatisfaction_severity ?? null,
-      issue_category: c.issue_category ?? null,
-      resolution_status: c.resolution_status ?? null,
-      language: c.language ?? null,
-      agent_performance_score: c.agent_performance_score ?? null,
-      agent_performance_notes: c.agent_performance_notes ?? null,
-      key_quotes: c.key_quotes ?? null,
-      recommended_action: c.recommended_action ?? null,
-      is_alert_worthy: c.is_alert_worthy ?? false,
-      alert_reason: c.alert_reason ?? null,
-
-      original_text: c.original_text ?? null,
-      last_prompt_id: c.last_prompt_id ?? null,
-      last_prompt_content: c.last_prompt_content ?? null,
-      notes: !cnRes.error
-        ? (cnRes.data ?? [])
-            .filter((n) => n.conversation_id === c.id)
-            .map((n) => ({
-              id: n.id,
-              author: n.author,
-              text: n.text,
-              ts: n.created_at,
-              system: n.is_system,
-            }))
-        : [],
-    }));
+    const conversations: Conversation[] = (cRes.data ?? []).map((c) => {
+      const notes: ConversationNote[] = rawNotes
+        .filter((n) => n.conversation_id === c.id)
+        .map((n) => ({ id: n.id, author: n.author, text: n.text, ts: n.created_at, system: n.is_system }));
+      return mapConversationRow(c, notes);
+    });
 
     const prompts: PromptVersion[] = (pRes.data ?? []).map((p) => ({
       id: p.id,

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useStore } from '@/lib/store';
 import { useToast } from '@/components/layout/ToastProvider';
@@ -63,6 +63,14 @@ export default function ConversationList() {
     });
     cancelSelectMode();
     toast(`${count} conversation(s) deleted`, 'success');
+  };
+
+  const handleDeleteOne = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!await confirm('Delete this conversation?', { danger: true, confirmLabel: 'Delete' })) return;
+    deleteConversation(id);
+    dbDeleteConversation(id);
+    toast('Conversation deleted', 'success');
   };
 
   if (conversations.length === 0) {
@@ -159,6 +167,7 @@ export default function ConversationList() {
               selected={selected.has(conv.id)}
               onToggleSelect={() => toggleSelect(conv.id)}
               onClick={() => !selectMode && router.push(`/conversations/${conv.id}`)}
+              onDelete={(e) => handleDeleteOne(conv.id, e)}
             />
           ))}
         </div>
