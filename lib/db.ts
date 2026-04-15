@@ -445,6 +445,39 @@ export interface MinimalConversation {
   original_text: string | null;
 }
 
+export async function dbGetActivePrompt(): Promise<PromptVersion | null> {
+  const { data, error } = await supabase
+    .from('prompts')
+    .select('*')
+    .eq('is_active', true)
+    .limit(1)
+    .single();
+  if (error || !data) return null;
+  return {
+    id: data.id,
+    title: data.title ?? 'Untitled',
+    content: data.content ?? '',
+    is_active: data.is_active ?? true,
+    created_at: data.created_at,
+    updated_at: data.updated_at ?? data.created_at,
+  };
+}
+
+export async function getUnanalyzedConversationsByDate(date: string): Promise<MinimalConversation[]> {
+  const [startUnix, endUnix] = cestDateToUnixRange(date);
+  const startISO = new Date(startUnix * 1000).toISOString();
+  const endISO   = new Date(endUnix   * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('id, intercom_id, player_name, player_email, agent_name, brand, original_text')
+    .is('summary', null)
+    .not('original_text', 'is', null)
+    .gte('intercom_created_at', startISO)
+    .lte('intercom_created_at', endISO);
+  if (error) throw new Error(`[db] getUnanalyzedConversationsByDate: ${error.message}`);
+  return (data ?? []) as MinimalConversation[];
+}
+
 export async function getUnanalyzedConversations(): Promise<MinimalConversation[]> {
   const { data, error } = await supabase
     .from('conversations')
