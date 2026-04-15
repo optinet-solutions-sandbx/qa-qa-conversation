@@ -40,12 +40,12 @@ export async function GET(req: NextRequest) {
 
   try {
     // ── Build base query filters ─────────────────────────────────────────
-    type QueryBuilder = ReturnType<typeof supabase.from>;
-    const applyFilters = (q: QueryBuilder) => {
-      if (dateFrom) q = (q as ReturnType<typeof supabase.from<string, Record<string, unknown>>>).gte('intercom_created_at', `${dateFrom}T00:00:00`);
-      if (dateTo)   q = (q as ReturnType<typeof supabase.from<string, Record<string, unknown>>>).lte('intercom_created_at', `${dateTo}T23:59:59`);
-      if (brand)    q = (q as ReturnType<typeof supabase.from<string, Record<string, unknown>>>).eq('brand', brand);
-      if (agent)    q = (q as ReturnType<typeof supabase.from<string, Record<string, unknown>>>).eq('agent_name', agent);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applyFilters = (q: any) => {
+      if (dateFrom) q = q.gte('intercom_created_at', `${dateFrom}T00:00:00`);
+      if (dateTo)   q = q.lte('intercom_created_at', `${dateTo}T23:59:59`);
+      if (brand)    q = q.eq('brand', brand);
+      if (agent)    q = q.eq('agent_name', agent);
       return q;
     };
 
