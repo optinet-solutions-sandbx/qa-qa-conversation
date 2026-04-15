@@ -275,8 +275,8 @@ export default function ConversationList() {
                       </span>
                     ) : (
                       <button
-                        key={p}
-                        onClick={() => fetchPage(p)}
+                        key={`page-${p}`}
+                        onClick={() => fetchPage(p as number)}
                         className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${
                           p === page
                             ? 'bg-slate-800 text-white'

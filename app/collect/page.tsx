@@ -471,10 +471,11 @@ export default function CollectPage() {
                 <IconChevronLeft />
               </button>
               {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
-                const pageNum = totalPages <= 7 ? i : Math.max(0, Math.min(page - 3 + i, totalPages - 7 + i));
+                const start = Math.max(0, Math.min(page - 3, totalPages - 7));
+                const pageNum = start + i;
                 return (
                   <button
-                    key={pageNum}
+                    key={`page-${pageNum}`}
                     onClick={() => loadTable(pageNum, date, search)}
                     className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${
                       pageNum === page ? 'bg-slate-800 text-white' : 'border border-slate-200 text-slate-500 hover:bg-slate-50'
