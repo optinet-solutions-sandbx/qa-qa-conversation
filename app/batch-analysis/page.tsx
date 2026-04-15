@@ -322,7 +322,7 @@ export default function BatchAnalysisPage() {
       ) : (
         <div className="space-y-3">
           <div className="flex items-center justify-between">
-            <h2 className="text-sm font-semibold text-white">Batch Jobs</h2>
+            <h2 className="text-sm font-semibold text-black">Batch Jobs</h2>
             {hasActiveJobs && (
               <span className="text-xs text-white/30">Auto-refreshing every 30s</span>
             )}
