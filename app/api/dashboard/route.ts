@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
+import { cestDateToUnixRange } from '@/lib/intercom';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -39,13 +40,16 @@ export async function GET(req: NextRequest) {
   const agent    = searchParams.get('agent');
 
   try {
-    // ── Build base query filters ─────────────────────────────────────────
+    // ── Build base query filters (dates interpreted in CEST / UTC+2) ────────
+    const cestFromISO = dateFrom ? new Date(cestDateToUnixRange(dateFrom)[0] * 1000).toISOString() : null;
+    const cestToISO   = dateTo   ? new Date(cestDateToUnixRange(dateTo)[1]   * 1000).toISOString() : null;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const applyFilters = (q: any) => {
-      if (dateFrom) q = q.gte('intercom_created_at', `${dateFrom}T00:00:00`);
-      if (dateTo)   q = q.lte('intercom_created_at', `${dateTo}T23:59:59`);
-      if (brand)    q = q.eq('brand', brand);
-      if (agent)    q = q.eq('agent_name', agent);
+      if (cestFromISO) q = q.gte('intercom_created_at', cestFromISO);
+      if (cestToISO)   q = q.lte('intercom_created_at', cestToISO);
+      if (brand)       q = q.eq('brand', brand);
+      if (agent)       q = q.eq('agent_name', agent);
       return q;
     };
 
@@ -141,22 +145,18 @@ export async function GET(req: NextRequest) {
       (r) => (r.agent_name as string | null)
     ).slice(0, 15);
 
-    // ── Conversations by date (all conversations, not just analyzed) ─────
-    const { data: dateRows } = await applyFilters(
-      supabase
-        .from('conversations')
-        .select('intercom_created_at')
-        .not('intercom_created_at', 'is', null)
-    ) as { data: Array<{ intercom_created_at: string }> | null };
+    // ── Conversations by date (grouped in DB via RPC — no row-limit issue) ──
+    const { data: dateAgg } = await supabase.rpc('get_conversations_by_cest_date', {
+      p_date_from: cestFromISO ?? null,
+      p_date_to:   cestToISO   ?? null,
+      p_brand:     brand       ?? null,
+      p_agent:     agent       ?? null,
+    }) as { data: Array<{ cest_date: string; conversation_count: number }> | null };
 
-    const dateMap: Record<string, number> = {};
-    for (const r of (dateRows ?? [])) {
-      const day = r.intercom_created_at.slice(0, 10);
-      dateMap[day] = (dateMap[day] ?? 0) + 1;
-    }
-    const conversationsByDate = Object.entries(dateMap)
-      .map(([date, count]) => ({ date, count }))
-      .sort((a, b) => a.date.localeCompare(b.date));
+    const conversationsByDate = (dateAgg ?? []).map((r) => ({
+      date:  r.cest_date,
+      count: r.conversation_count,
+    }));
 
     // ── Filter options (for dropdowns) ───────────────────────────────────
     const { data: allBrands } = await supabase

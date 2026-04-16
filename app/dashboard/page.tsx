@@ -84,13 +84,13 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 // ── Custom tooltip ─────────────────────────────────────────────────────────
 
-function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number; name?: string; fill?: string }[]; label?: string }) {
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number; name?: string; color?: string; fill?: string }[]; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
     <div className="bg-white border border-slate-200 rounded-xl shadow-lg px-3 py-2 text-xs">
       {label && <p className="font-medium text-slate-600 mb-1">{label}</p>}
       {payload.map((p, i) => (
-        <p key={i} style={{ color: p.fill ?? '#3b82f6' }}>{p.name ? `${p.name}: ` : ''}{fmt(p.value)}</p>
+        <p key={i} style={{ color: p.color ?? p.fill ?? '#3b82f6' }}>{p.name ? `${p.name}: ` : ''}{fmt(p.value)}</p>
       ))}
     </div>
   );
