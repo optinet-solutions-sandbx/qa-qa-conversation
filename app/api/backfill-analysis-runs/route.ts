@@ -11,41 +11,49 @@ export const maxDuration = 300;
 // One-time backfill: creates an analysis_run record for every conversation
 // that has a summary but no existing analysis_run entry.
 // Safe to call multiple times — skips conversation_ids already present.
+//
+// Strategy: fetch only lightweight metadata (no summary text) to avoid
+// statement timeouts caused by fetching thousands of large text fields.
+// summary is left null in the backfilled rows — the actual text remains
+// in conversations.summary and is unaffected.
 
 export async function POST() {
   try {
-    // 1. Collect all conversation_ids that already have at least one analysis_run
-    const { data: existing, error: existingError } = await supabase
-      .from('analysis_runs')
-      .select('conversation_id');
-    if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
-
-    const existingIds = new Set((existing ?? []).map((r: { conversation_id: string }) => r.conversation_id));
-
-    // 2. Page through conversations that have a summary
     let inserted = 0;
     let skipped = 0;
     let page = 0;
-    const pageSize = 500;
+    const pageSize = 200; // small pages to stay within Supabase statement timeout
 
     while (true) {
+      // Fetch lightweight metadata only — no summary/original_text columns
       const { data: convs, error } = await supabase
         .from('conversations')
-        .select('id, title, player_name, summary, analyzed_at, last_prompt_id, last_prompt_content')
+        .select('id, title, player_name, analyzed_at, last_prompt_id, last_prompt_content')
         .not('summary', 'is', null)
         .not('analyzed_at', 'is', null)
+        .order('id')
         .range(page * pageSize, (page + 1) * pageSize - 1);
 
       if (error) return NextResponse.json({ error: error.message }, { status: 500 });
       if (!convs || convs.length === 0) break;
 
+      // Check which of these conversation IDs already have an analysis_run
+      const convIds = convs.map((c: { id: string }) => c.id);
+      const { data: existing, error: existingError } = await supabase
+        .from('analysis_runs')
+        .select('conversation_id')
+        .in('conversation_id', convIds);
+
+      if (existingError) return NextResponse.json({ error: existingError.message }, { status: 500 });
+
+      const existingSet = new Set((existing ?? []).map((r: { conversation_id: string }) => r.conversation_id));
+
       const toInsert: AnalysisRun[] = convs
-        .filter((c: { id: string }) => !existingIds.has(c.id))
+        .filter((c: { id: string }) => !existingSet.has(c.id))
         .map((c: {
           id: string;
           title: string | null;
           player_name: string | null;
-          summary: string;
           analyzed_at: string;
           last_prompt_id: string | null;
           last_prompt_content: string | null;
@@ -58,7 +66,7 @@ export async function POST() {
           prompt_id: c.last_prompt_id ?? null,
           prompt_title: null,
           prompt_content: c.last_prompt_content ?? '',
-          summary: c.summary,
+          summary: null, // not fetched to avoid timeout; text is in conversations.summary
           language: null,
           dissatisfaction_severity: null,
           issue_category: null,
