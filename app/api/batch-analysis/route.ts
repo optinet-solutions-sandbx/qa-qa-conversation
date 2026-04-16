@@ -61,7 +61,7 @@ function buildJsonlLine(conv: {
     method: 'POST',
     url: '/v1/chat/completions',
     body: {
-      model: 'gpt-4o-mini',
+      model: 'gpt-5-nano',
       messages: [
         { role: 'system', content: promptContent },
         { role: 'user', content: buildUserMessage(conv) },
