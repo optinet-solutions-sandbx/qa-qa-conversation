@@ -210,8 +210,13 @@ export default function BatchAnalysisPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ batchJobId: job.id }),
       });
+      if (!res.ok) {
+        const text = await res.text();
+        let message = 'Import failed';
+        try { message = (JSON.parse(text) as { error?: string }).error ?? message; } catch { /* plain-text error */ }
+        throw new Error(message);
+      }
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'Import failed');
       setImportResults((prev) => ({ ...prev, [job.id]: data }));
       await fetchJobs(true);
     } catch (e) {
@@ -232,8 +237,13 @@ export default function BatchAnalysisPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ batchJobId: job.id }),
       });
+      if (!res.ok) {
+        const text = await res.text();
+        let message = 'Cancel failed';
+        try { message = (JSON.parse(text) as { error?: string }).error ?? message; } catch { /* plain-text error */ }
+        throw new Error(message);
+      }
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? 'Cancel failed');
       await fetchJobs(true);
     } catch (e) {
       alert((e as Error).message);

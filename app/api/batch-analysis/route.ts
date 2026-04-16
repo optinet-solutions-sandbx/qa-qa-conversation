@@ -339,7 +339,9 @@ export async function PATCH(req: NextRequest) {
   const { batchJobId } = body;
   if (!batchJobId) return NextResponse.json({ error: 'batchJobId is required' }, { status: 400 });
 
-  const job = await dbGetBatchJobById(batchJobId);
+  let job: BatchJob | null;
+  try { job = await dbGetBatchJobById(batchJobId); }
+  catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 500 }); }
   if (!job) return NextResponse.json({ error: 'Batch job not found' }, { status: 404 });
   if (job.status !== 'completed') {
     return NextResponse.json({ error: `Batch is not completed yet (status: ${job.status})` }, { status: 400 });
@@ -437,7 +439,9 @@ export async function DELETE(req: NextRequest) {
   const { batchJobId } = body;
   if (!batchJobId) return NextResponse.json({ error: 'batchJobId is required' }, { status: 400 });
 
-  const job = await dbGetBatchJobById(batchJobId);
+  let job: BatchJob | null;
+  try { job = await dbGetBatchJobById(batchJobId); }
+  catch (e) { return NextResponse.json({ error: (e as Error).message }, { status: 500 }); }
   if (!job) return NextResponse.json({ error: 'Batch job not found' }, { status: 404 });
 
   const cancellableStatuses: BatchJobStatus[] = ['validating', 'in_progress', 'finalizing'];
