@@ -64,15 +64,27 @@ export async function GET(req: NextRequest) {
     const analyzed   = analyzedRes.count ?? 0;
     const alertWorthy = alertRes.count   ?? 0;
 
-    // ── Analyzed conversations (lightweight — only needed fields) ────────
-    const { data: analyzedRows } = await applyFilters(
-      supabase
-        .from('conversations')
-        .select('summary, brand, agent_name, is_alert_worthy, intercom_created_at, language, resolution_status, dissatisfaction_severity')
-        .not('summary', 'is', null)
-    ) as { data: Array<Record<string, unknown>> | null };
+    // ── Analyzed conversations (paginated to bypass 1000-row default limit) ──
+    const PAGE_SIZE = 1000;
+    const allAnalyzedRows: Array<Record<string, unknown>> = [];
+    let from = 0;
 
-    const rows = analyzedRows ?? [];
+    while (true) {
+      const { data: page } = await applyFilters(
+        supabase
+          .from('conversations')
+          .select('summary, brand, agent_name, is_alert_worthy, intercom_created_at, language, resolution_status, dissatisfaction_severity')
+          .not('summary', 'is', null)
+          .range(from, from + PAGE_SIZE - 1)
+      ) as { data: Array<Record<string, unknown>> | null };
+
+      if (!page || page.length === 0) break;
+      allAnalyzedRows.push(...page);
+      if (page.length < PAGE_SIZE) break;
+      from += PAGE_SIZE;
+    }
+
+    const rows = allAnalyzedRows;
 
     // ── Parse summary JSON for fields not stored individually ────────────
     type Parsed = {
