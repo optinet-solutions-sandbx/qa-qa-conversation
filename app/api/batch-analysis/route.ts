@@ -425,9 +425,10 @@ export async function PATCH(req: NextRequest) {
   const promptContent = job.prompt_content ?? '';
   const now = new Date().toISOString();
 
-  // Pre-fetch conversation metadata (title + player_name) for all lines in one
-  // batch query so analysis_runs rows are properly populated instead of null.
-  const allConvIds = lines
+  // Pre-fetch conversation metadata (title + player_name) only for lines that
+  // still need importing (from startAt onwards) to avoid Supabase URL-length
+  // limits and wasted work when resuming a partially-completed import.
+  const pendingConvIds = lines.slice(startAt)
     .map((l) => { try { return JSON.parse(l); } catch { return null; } })
     .filter(Boolean)
     .map((r: { custom_id?: string }) => {
@@ -435,7 +436,7 @@ export async function PATCH(req: NextRequest) {
       return id.startsWith('conv-') ? id.slice(5) : null;
     })
     .filter((id): id is string => id !== null);
-  const convMeta = await getConversationMetadataBatch(allConvIds);
+  const convMeta = await getConversationMetadataBatch(pendingConvIds);
 
   let imported = startAt; // running total including previous partial imports
   let failed = 0;
