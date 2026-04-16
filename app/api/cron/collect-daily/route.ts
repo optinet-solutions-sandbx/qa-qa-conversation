@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+import { waitUntil } from '@vercel/functions';
 import { searchConversationsByDate, fetchIntercomData } from '@/lib/intercom';
 import { getExistingIntercomIds, dbInsertConversation } from '@/lib/db';
 import { generateId } from '@/lib/utils';
@@ -21,66 +22,31 @@ function yesterdayUtc(): string {
   return d.toISOString().slice(0, 10);
 }
 
-// ── GET /api/cron/collect-daily ────────────────────────────────────────────
-//
-// Called by Vercel Cron (vercel.json) once per day.
-// Can also be triggered manually with ?date=YYYY-MM-DD for backfills.
-//
-// Security: Vercel automatically sends Authorization: Bearer <CRON_SECRET>.
-// Set CRON_SECRET in your Vercel environment variables.
+// ── Background worker ──────────────────────────────────────────────────────
 
-export async function GET(req: NextRequest) {
-  // ── Auth ─────────────────────────────────────────────────────────────────
-  const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = req.headers.get('authorization') ?? '';
-    if (auth !== `Bearer ${secret}`) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
-  }
-
-  const apiKey = process.env.INTERCOM_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ error: 'INTERCOM_API_KEY not configured' }, { status: 500 });
-  }
-
-  // ── Date ─────────────────────────────────────────────────────────────────
-  const dateParam = req.nextUrl.searchParams.get('date');
-  const date = dateParam ?? yesterdayUtc();
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return NextResponse.json({ error: 'Invalid date format. Use YYYY-MM-DD.' }, { status: 400 });
-  }
-
-  const startedAt = Date.now();
+async function runCollection(date: string, apiKey: string) {
   let saved = 0;
   let skipped = 0;
   let errors = 0;
   const errorSamples: string[] = [];
+  const startedAt = Date.now();
 
   try {
-    // ── Step 1: search Intercom for all conversation IDs on this date ───────
+    // Step 1: search Intercom for all conversation IDs on this date
     const searchResults = await searchConversationsByDate(date, apiKey);
     const allIds = searchResults.map((r) => r.intercom_id);
 
     if (allIds.length === 0) {
-      return NextResponse.json({
-        date,
-        message: 'No conversations found for this date.',
-        saved: 0,
-        skipped: 0,
-        errors: 0,
-        total_found: 0,
-        duration_seconds: 0,
-      });
+      console.log(`[cron] collect-daily ${date}: no conversations found`);
+      return;
     }
 
-    // ── Step 2: skip IDs already in the database (idempotent) ───────────────
+    // Step 2: skip IDs already in the database (idempotent)
     const existingIds = await getExistingIntercomIds(allIds);
     const newIds = allIds.filter((id) => !existingIds.has(id));
     skipped = existingIds.size;
 
-    // ── Step 3: fetch + save each new conversation ───────────────────────────
+    // Step 3: fetch + save each new conversation
     // Process 3 conversations concurrently to stay within cron timeouts while
     // keeping well under Intercom's rate limits (~200ms between batches).
     const BATCH_SIZE = 3;
@@ -180,33 +146,54 @@ export async function GET(req: NextRequest) {
       }
     }
   } catch (e) {
-    const msg = (e as Error).message;
-    return NextResponse.json(
-      {
-        date,
-        error: msg,
-        saved,
-        skipped,
-        errors,
-        duration_seconds: Math.round((Date.now() - startedAt) / 1000),
-      },
-      { status: 500 },
-    );
+    console.error(`[cron] collect-daily ${date} fatal error:`, (e as Error).message);
+    return;
   }
 
   const duration = Math.round((Date.now() - startedAt) / 1000);
-
   console.log(
     `[cron] collect-daily ${date}: saved=${saved} skipped=${skipped} errors=${errors} (${duration}s)`,
+    errorSamples.length > 0 ? { error_samples: errorSamples } : '',
   );
+}
 
-  return NextResponse.json({
-    date,
-    saved,
-    skipped,
-    errors,
-    total_found: saved + skipped + errors,
-    duration_seconds: duration,
-    ...(errorSamples.length > 0 && { error_samples: errorSamples }),
-  });
+// ── GET /api/cron/collect-daily ────────────────────────────────────────────
+//
+// Called by cron-job.org (or Vercel Cron via vercel.json) once per day.
+// Can also be triggered manually with ?date=YYYY-MM-DD for backfills.
+//
+// Uses waitUntil so the response returns immediately (avoiding cron-job.org's
+// 30s connection timeout) while Vercel continues processing up to maxDuration.
+//
+// Security: Vercel automatically sends Authorization: Bearer <CRON_SECRET>.
+// Set CRON_SECRET in your Vercel environment variables.
+
+export async function GET(req: NextRequest) {
+  // ── Auth ─────────────────────────────────────────────────────────────────
+  const secret = process.env.CRON_SECRET;
+  if (secret) {
+    const auth = req.headers.get('authorization') ?? '';
+    if (auth !== `Bearer ${secret}`) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+  }
+
+  const apiKey = process.env.INTERCOM_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ error: 'INTERCOM_API_KEY not configured' }, { status: 500 });
+  }
+
+  // ── Date ─────────────────────────────────────────────────────────────────
+  const dateParam = req.nextUrl.searchParams.get('date');
+  const date = dateParam ?? yesterdayUtc();
+
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return NextResponse.json({ error: 'Invalid date format. Use YYYY-MM-DD.' }, { status: 400 });
+  }
+
+  // Kick off the heavy work in the background so cron-job.org gets a fast 200
+  // response instead of timing out waiting for all conversations to be fetched.
+  waitUntil(runCollection(date, apiKey));
+
+  return NextResponse.json({ date, message: 'Collection started in background' });
 }
