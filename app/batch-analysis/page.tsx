@@ -38,6 +38,36 @@ function IconRefresh({ spinning }: { spinning?: boolean }) {
 
 const ACTIVE_STATUSES = new Set(['validating', 'in_progress', 'finalizing']);
 const POLL_INTERVAL_MS = 30_000;
+const JOBS_PER_PAGE = 10;
+type FilterTab = 'all' | 'action' | 'done';
+
+function getPageNumbers(current: number, total: number): (number | '…')[] {
+  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+  const pages: (number | '…')[] = [1];
+  if (current > 3) pages.push('…');
+  for (let i = Math.max(2, current - 1); i <= Math.min(total - 1, current + 1); i++) pages.push(i);
+  if (current < total - 2) pages.push('…');
+  pages.push(total);
+  return pages;
+}
+
+function isActionable(j: BatchJob) {
+  return (
+    ACTIVE_STATUSES.has(j.status) ||
+    j.status === 'pending' ||
+    (j.status === 'completed' && j.imported_count < j.total_conversations)
+  );
+}
+
+function isDone(j: BatchJob) {
+  return (
+    (j.status === 'completed' && j.imported_count >= j.total_conversations) ||
+    j.status === 'cancelled' ||
+    j.status === 'cancelling' ||
+    j.status === 'failed' ||
+    j.status === 'expired'
+  );
+}
 
 function statusLabel(status: BatchJob['status']): string {
   const labels: Record<BatchJob['status'], string> = {
@@ -83,6 +113,9 @@ export default function BatchAnalysisPage() {
 
   const [importingJobId, setImportingJobId] = useState<string | null>(null);
   const [importResults, setImportResults] = useState<Record<string, { imported: number; failed: number; resumed_from: number }>>({});
+  const [activeTab, setActiveTab] = useState<FilterTab>('all');
+  const [tabInitialised, setTabInitialised] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
 
   const pollTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -187,10 +220,31 @@ export default function BatchAnalysisPage() {
     }
   };
 
+  // Auto-default tab once jobs first load
+  useEffect(() => {
+    if (!tabInitialised && jobs.length > 0) {
+      setActiveTab(jobs.some(isActionable) ? 'action' : 'all');
+      setTabInitialised(true);
+    }
+  }, [jobs, tabInitialised]);
+
   // ── Render ─────────────────────────────────────────────────────────────
 
   const hasActiveJobs = jobs.some((j) => ACTIVE_STATUSES.has(j.status));
-  const hasCompletedJobs = jobs.some((j) => j.status === 'completed');
+  // Only show the banner for completed jobs that haven't been fully imported yet
+  const hasPendingImportJobs = jobs.some((j) => j.status === 'completed' && j.imported_count < j.total_conversations);
+  const actionCount = jobs.filter(isActionable).length;
+  const doneCount = jobs.filter(isDone).length;
+
+  const filteredJobs = jobs.filter((j) => {
+    if (activeTab === 'action') return isActionable(j);
+    if (activeTab === 'done') return isDone(j);
+    return true;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filteredJobs.length / JOBS_PER_PAGE));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedJobs = filteredJobs.slice((safePage - 1) * JOBS_PER_PAGE, safePage * JOBS_PER_PAGE);
 
   return (
     <div className="flex flex-col gap-6 p-6 max-w-4xl mx-auto">
@@ -321,6 +375,7 @@ export default function BatchAnalysisPage() {
         </div>
       ) : (
         <div className="space-y-3">
+          {/* Header row */}
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-black">Batch Jobs</h2>
             {hasActiveJobs && (
@@ -328,13 +383,39 @@ export default function BatchAnalysisPage() {
             )}
           </div>
 
-          {hasCompletedJobs && (
+          {/* Completed-jobs action banner */}
+          {hasPendingImportJobs && (
             <div className="rounded-xl bg-blue-500 px-4 py-3 text-sm font-medium text-white shadow-lg shadow-blue-500/20">
               Completed jobs are ready to import. Click "Import Results" to write analysis to conversations.
             </div>
           )}
 
-          {jobs.map((job) => {
+          {/* Filter tabs */}
+          <div className="flex items-center gap-1 bg-[#161b22] border border-white/[0.08] rounded-xl p-1 w-fit">
+            {([ ['all', 'All', jobs.length], ['action', 'Needs Action', actionCount], ['done', 'Done', doneCount] ] as [FilterTab, string, number][]).map(([tab, label, count]) => (
+              <button
+                key={tab}
+                onClick={() => { setActiveTab(tab); setCurrentPage(1); }}
+                className={[
+                  'flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors',
+                  activeTab === tab
+                    ? 'bg-white/10 text-white'
+                    : 'text-white/40 hover:text-white/70',
+                ].join(' ')}
+              >
+                {label}
+                <span className={['text-xs rounded-full px-1.5 py-0.5 leading-none', activeTab === tab ? 'bg-white/15 text-white/80' : 'bg-white/5 text-white/30'].join(' ')}>
+                  {count}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          {filteredJobs.length === 0 && (
+            <div className="text-center py-8 text-white/25 text-sm">No jobs in this category.</div>
+          )}
+
+          {pagedJobs.map((job) => {
             const done = job.completed_conversations;
             const total = job.total_conversations;
             const progress = pct(done, total);
@@ -342,6 +423,35 @@ export default function BatchAnalysisPage() {
             const importResult = importResults[job.id];
             const alreadyImported = job.imported_count > 0 && job.imported_count >= total;
 
+            // ── Compact row for terminal / done jobs ──────────────────────
+            if (isDone(job)) {
+              return (
+                <div
+                  key={job.id}
+                  className="bg-[#161b22] border border-white/[0.08] rounded-xl px-4 py-2.5 flex items-center gap-3 flex-wrap"
+                >
+                  <span className={['text-xs font-medium px-2 py-0.5 rounded-full shrink-0', statusColor(job.status)].join(' ')}>
+                    {statusLabel(job.status)}
+                  </span>
+                  <span className="text-xs text-white/40">{total.toLocaleString()} conversations</span>
+                  {job.completed_at
+                    ? <span className="text-xs text-white/25">Completed {fmtTime(job.completed_at)}</span>
+                    : job.submitted_at
+                    ? <span className="text-xs text-white/25">Submitted {fmtTime(job.submitted_at)}</span>
+                    : null}
+                  {job.error_message && (
+                    <span className="text-xs text-red-400/70 truncate">{job.error_message}</span>
+                  )}
+                  {job.openai_batch_id && (
+                    <span className="ml-auto font-mono text-xs text-white/20 truncate max-w-[200px]" title={job.openai_batch_id}>
+                      {job.openai_batch_id}
+                    </span>
+                  )}
+                </div>
+              );
+            }
+
+            // ── Full card for actionable jobs ─────────────────────────────
             return (
               <div
                 key={job.id}
@@ -381,7 +491,7 @@ export default function BatchAnalysisPage() {
                     </button>
                   )}
 
-                  {/* Resume import button (partial import) */}
+                  {/* Resume import indicator */}
                   {job.status === 'completed' && !alreadyImported && job.imported_count > 0 && (
                     <span className="text-xs text-amber-400/80 shrink-0">
                       Resume from {job.imported_count.toLocaleString()}
@@ -389,7 +499,7 @@ export default function BatchAnalysisPage() {
                   )}
                 </div>
 
-                {/* Progress bar (in-progress or completed) */}
+                {/* Progress bar */}
                 {(ACTIVE_STATUSES.has(job.status) || job.status === 'completed') && (
                   <div>
                     <div className="flex justify-between text-xs text-white/30 mb-1">
@@ -450,6 +560,47 @@ export default function BatchAnalysisPage() {
               </div>
             );
           })}
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-xs text-white/25">
+                {((safePage - 1) * JOBS_PER_PAGE) + 1}–{Math.min(safePage * JOBS_PER_PAGE, filteredJobs.length)} of {filteredJobs.length} jobs
+              </span>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={safePage === 1}
+                  className="px-2.5 py-1.5 text-xs text-white/40 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed rounded-lg hover:bg-white/[0.05] transition-colors"
+                >
+                  ← Prev
+                </button>
+                {getPageNumbers(safePage, totalPages).map((p, i) =>
+                  p === '…'
+                    ? <span key={`ellipsis-${i}`} className="px-1.5 text-xs text-white/20">…</span>
+                    : <button
+                        key={p}
+                        onClick={() => setCurrentPage(p)}
+                        className={[
+                          'w-7 h-7 text-xs rounded-lg transition-colors',
+                          safePage === p
+                            ? 'bg-white/10 text-white font-medium'
+                            : 'text-white/40 hover:text-white hover:bg-white/[0.05]',
+                        ].join(' ')}
+                      >
+                        {p}
+                      </button>
+                )}
+                <button
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={safePage === totalPages}
+                  className="px-2.5 py-1.5 text-xs text-white/40 hover:text-white disabled:opacity-20 disabled:cursor-not-allowed rounded-lg hover:bg-white/[0.05] transition-colors"
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
