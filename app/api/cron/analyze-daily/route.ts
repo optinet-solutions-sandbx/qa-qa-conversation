@@ -7,8 +7,9 @@ import {
   dbUpdateBatchJob,
   dbInsertBatchJob,
   dbUpdateAnalysisFields,
+  dbInsertAnalysisRun,
 } from '@/lib/db';
-import type { BatchJob, BatchJobStatus } from '@/lib/types';
+import type { BatchJob, BatchJobStatus, AnalysisRun } from '@/lib/types';
 import { generateId } from '@/lib/utils';
 
 // Allow up to 5 minutes on Vercel Pro
@@ -235,6 +236,30 @@ export async function GET(req: NextRequest) {
               last_prompt_content: job.prompt_content ?? '',
               analyzed_at: now,
             });
+
+            const run: AnalysisRun = {
+              id: generateId(),
+              conversation_id: convId,
+              conversation_title: null,
+              player_name: null,
+              analyzed_at: now,
+              prompt_id: job.prompt_id ?? null,
+              prompt_title: null,
+              prompt_content: job.prompt_content ?? '',
+              summary: analysisText,
+              language: null,
+              dissatisfaction_severity: null,
+              issue_category: null,
+              resolution_status: null,
+              key_quotes: null,
+              agent_performance_score: null,
+              agent_performance_notes: null,
+              recommended_action: null,
+              is_alert_worthy: false,
+              alert_reason: null,
+            };
+            await dbInsertAnalysisRun(run);
+
             imported++;
           } catch { continue; }
 

@@ -81,97 +81,102 @@ export async function GET(req: NextRequest) {
     skipped = existingIds.size;
 
     // ── Step 3: fetch + save each new conversation ───────────────────────────
-    for (let i = 0; i < newIds.length; i++) {
-      const intercomId = newIds[i];
+    // Process 3 conversations concurrently to stay within cron timeouts while
+    // keeping well under Intercom's rate limits (~200ms between batches).
+    const BATCH_SIZE = 3;
+    for (let i = 0; i < newIds.length; i += BATCH_SIZE) {
+      const batch = newIds.slice(i, i + BATCH_SIZE);
 
-      try {
-        const data = await fetchIntercomData(intercomId, apiKey);
+      await Promise.all(batch.map(async (intercomId) => {
+        try {
+          const data = await fetchIntercomData(intercomId, apiKey);
 
-        const conv: Conversation = {
-          id: generateId(),
-          title:
-            data.transcript?.split('\n')[0]?.replace(/^(Agent|User):\s*/i, '').slice(0, 80) ||
-            `Conversation ${intercomId}`,
-          analyzed_at: new Date().toISOString(),
+          const conv: Conversation = {
+            id: generateId(),
+            title:
+              data.transcript?.split('\n')[0]?.replace(/^(Agent|User):\s*/i, '').slice(0, 80) ||
+              `Conversation ${intercomId}`,
+            analyzed_at: new Date().toISOString(),
 
-          intercom_id: data.intercom_id,
-          intercom_created_at: data.intercom_created_at,
+            intercom_id: data.intercom_id,
+            intercom_created_at: data.intercom_created_at,
 
-          player_name: data.player_name,
-          player_email: data.player_email,
-          player_id: data.player_id,
-          player_external_id: data.player_external_id,
-          player_phone: data.player_phone,
-          player_tags: data.player_tags ?? [],
-          player_signed_up_at: data.player_signed_up_at,
-          player_last_seen_at: data.player_last_seen_at,
-          player_last_replied_at: data.player_last_replied_at,
-          player_last_contacted_at: data.player_last_contacted_at,
-          player_country: data.player_country,
-          player_city: data.player_city,
-          player_browser: data.player_browser,
-          player_os: data.player_os,
-          player_custom_attributes: data.player_custom_attributes,
-          player_companies: data.player_companies ?? [],
-          player_segments: data.player_segments ?? [],
-          player_event_summaries: data.player_event_summaries ?? [],
+            player_name: data.player_name,
+            player_email: data.player_email,
+            player_id: data.player_id,
+            player_external_id: data.player_external_id,
+            player_phone: data.player_phone,
+            player_tags: data.player_tags ?? [],
+            player_signed_up_at: data.player_signed_up_at,
+            player_last_seen_at: data.player_last_seen_at,
+            player_last_replied_at: data.player_last_replied_at,
+            player_last_contacted_at: data.player_last_contacted_at,
+            player_country: data.player_country,
+            player_city: data.player_city,
+            player_browser: data.player_browser,
+            player_os: data.player_os,
+            player_custom_attributes: data.player_custom_attributes,
+            player_companies: data.player_companies ?? [],
+            player_segments: data.player_segments ?? [],
+            player_event_summaries: data.player_event_summaries ?? [],
 
-          agent_name: data.agent_name,
-          agent_email: data.agent_email,
-          is_bot_handled: data.is_bot_handled ?? false,
+            agent_name: data.agent_name,
+            agent_email: data.agent_email,
+            is_bot_handled: data.is_bot_handled ?? false,
 
-          brand: data.brand,
-          tags: data.tags ?? [],
-          query_type: data.query_type,
-          ai_subject: data.ai_subject,
-          ai_issue_summary: data.ai_issue_summary,
-          cx_score_rating: data.cx_score_rating,
-          cx_score_explanation: data.cx_score_explanation,
-          conversation_rating_score: data.conversation_rating_score,
-          conversation_rating_remark: data.conversation_rating_remark,
+            brand: data.brand,
+            tags: data.tags ?? [],
+            query_type: data.query_type,
+            ai_subject: data.ai_subject,
+            ai_issue_summary: data.ai_issue_summary,
+            cx_score_rating: data.cx_score_rating,
+            cx_score_explanation: data.cx_score_explanation,
+            conversation_rating_score: data.conversation_rating_score,
+            conversation_rating_remark: data.conversation_rating_remark,
 
-          time_to_assignment: data.time_to_assignment,
-          time_to_admin_reply: data.time_to_admin_reply,
-          time_to_first_close: data.time_to_first_close,
-          median_time_to_reply: data.median_time_to_reply,
-          count_reopens: data.count_reopens,
+            time_to_assignment: data.time_to_assignment,
+            time_to_admin_reply: data.time_to_admin_reply,
+            time_to_first_close: data.time_to_first_close,
+            median_time_to_reply: data.median_time_to_reply,
+            count_reopens: data.count_reopens,
 
-          original_text: data.transcript,
-          notes: [],
+            original_text: data.transcript,
+            notes: [],
 
-          sentiment: null,
-          summary: null,
-          dissatisfaction_severity: null,
-          issue_category: null,
-          resolution_status: null,
-          language: null,
-          agent_performance_score: null,
-          agent_performance_notes: null,
-          key_quotes: null,
-          recommended_action: null,
-          is_alert_worthy: false,
-          alert_reason: null,
-          last_prompt_id: null,
-          last_prompt_content: null,
-        };
+            sentiment: null,
+            summary: null,
+            dissatisfaction_severity: null,
+            issue_category: null,
+            resolution_status: null,
+            language: null,
+            agent_performance_score: null,
+            agent_performance_notes: null,
+            key_quotes: null,
+            recommended_action: null,
+            is_alert_worthy: false,
+            alert_reason: null,
+            last_prompt_id: null,
+            last_prompt_content: null,
+          };
 
-        await dbInsertConversation(conv);
-        saved++;
-      } catch (e) {
-        const msg = (e as Error).message;
-        errors++;
-        if (errorSamples.length < 5) errorSamples.push(`${intercomId}: ${msg}`);
+          await dbInsertConversation(conv);
+          saved++;
+        } catch (e) {
+          const msg = (e as Error).message;
+          errors++;
+          if (errorSamples.length < 5) errorSamples.push(`${intercomId}: ${msg}`);
 
-        // If Intercom rate-limited us, back off for 65 seconds then continue
-        if (msg.toLowerCase().includes('rate limit')) {
-          console.warn(`[cron] Rate limited at conversation ${i + 1}/${newIds.length}. Waiting 65s…`);
-          await sleep(65_000);
+          // If Intercom rate-limited us, back off for 65 seconds then continue
+          if (msg.toLowerCase().includes('rate limit')) {
+            console.warn(`[cron] Rate limited fetching ${intercomId}. Waiting 65s…`);
+            await sleep(65_000);
+          }
         }
-      }
+      }));
 
-      // Small pause between each request to stay well under Intercom's limits
-      if (i < newIds.length - 1) {
-        await sleep(250);
+      // Pause between batches to respect Intercom's rate limits
+      if (i + BATCH_SIZE < newIds.length) {
+        await sleep(200);
       }
     }
   } catch (e) {

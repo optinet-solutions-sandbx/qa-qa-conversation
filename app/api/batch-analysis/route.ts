@@ -1,14 +1,17 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import {
-  getUnanalyzedConversations,
+  countUnanalyzedConversations,
+  getUnanalyzedConversationsPage,
   dbInsertBatchJob,
   dbUpdateBatchJob,
   dbGetBatchJobs,
   dbGetBatchJobById,
   dbUpdateAnalysisFields,
+  dbInsertAnalysisRun,
+  type MinimalConversation,
 } from '@/lib/db';
-import type { BatchJob, BatchJobStatus } from '@/lib/types';
+import type { BatchJob, BatchJobStatus, AnalysisRun } from '@/lib/types';
 import { generateId } from '@/lib/utils';
 
 // Allow up to 5 minutes — fetching 26k+ rows in pages + uploading to OpenAI
@@ -177,94 +180,117 @@ async function _POST(req: NextRequest) {
   const { promptId, promptContent, testLimit } = body;
   if (!promptContent?.trim()) return NextResponse.json({ error: 'promptContent is required' }, { status: 400 });
 
-  // Step 1 — fetch only what we need (no full conversation load)
-  let conversations;
+  // Step 1 — fast count query (no data transfer) to fail early if nothing to do
+  let totalAvailable: number;
   try {
-    conversations = await getUnanalyzedConversations();
+    totalAvailable = await countUnanalyzedConversations();
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
 
-  if (conversations.length === 0) {
+  if (totalAvailable === 0) {
     return NextResponse.json({ message: 'No unanalyzed conversations found.', jobs: [] });
   }
 
-  // testLimit: slice to N conversations for a dry-run before committing to the full dataset
-  if (testLimit && testLimit > 0) {
-    conversations = conversations.slice(0, testLimit);
-  }
+  // Cap to testLimit when provided
+  const effectiveTotal = (testLimit && testLimit > 0)
+    ? Math.min(testLimit, totalAvailable)
+    : totalAvailable;
 
-  // Step 2 — build JSONL lines
-  const lines = conversations.map((c) => buildJsonlLine(c, promptContent));
-
-  // Step 3 — chunk to respect rate limits
-  const chunks = chunkLines(lines);
-  const totalChunks = chunks.length;
+  // Step 2 — process one page at a time (MAX_REQUESTS_PER_CHUNK rows per page).
+  // Each page is fetched, converted to JSONL, and uploaded to OpenAI before the
+  // next page is loaded — keeping peak memory to ~1 page instead of the full set.
   const now = new Date().toISOString();
   const createdJobs: BatchJob[] = [];
+  let from = 0;
+  let chunkIndex = 0;
 
-  for (let i = 0; i < chunks.length; i++) {
-    const chunk = chunks[i];
-    const jobId = generateId();
+  while (from < effectiveTotal) {
+    const pageLimit = Math.min(MAX_REQUESTS_PER_CHUNK, effectiveTotal - from);
 
+    let page: MinimalConversation[];
     try {
-      const fileName = `batch_chunk_${i}_${Date.now()}.jsonl`;
-      const fileId = await uploadJsonlToOpenAI(chunk, fileName, openAIKey);
-      const batchId = await createOpenAIBatch(fileId, openAIKey);
-
-      const job: BatchJob = {
-        id: jobId,
-        openai_batch_id: batchId,
-        openai_file_id: fileId,
-        output_file_id: null,
-        status: 'validating',
-        prompt_id: promptId ?? null,
-        prompt_content: promptContent,
-        chunk_index: i,
-        total_chunks: totalChunks,
-        total_conversations: chunk.length,
-        completed_conversations: 0,
-        failed_conversations: 0,
-        imported_count: 0,
-        error_message: null,
-        created_at: now,
-        submitted_at: now,
-        completed_at: null,
-      };
-
-      await dbInsertBatchJob(job);
-      createdJobs.push(job);
+      page = await getUnanalyzedConversationsPage(from, pageLimit);
     } catch (e) {
-      // Save a failed job record so the user can see what went wrong
-      const failedJob: BatchJob = {
-        id: jobId,
-        openai_batch_id: null,
-        openai_file_id: null,
-        output_file_id: null,
-        status: 'failed',
-        prompt_id: promptId ?? null,
-        prompt_content: promptContent,
-        chunk_index: i,
-        total_chunks: totalChunks,
-        total_conversations: chunk.length,
-        completed_conversations: 0,
-        failed_conversations: chunk.length,
-        imported_count: 0,
-        error_message: (e as Error).message,
-        created_at: now,
-        submitted_at: null,
-        completed_at: null,
-      };
-      try { await dbInsertBatchJob(failedJob); } catch (dbErr) {
-        console.error('[batch-analysis] failed to save failed job record:', dbErr);
-      }
-      createdJobs.push(failedJob);
+      return NextResponse.json({ error: (e as Error).message }, { status: 500 });
     }
+
+    if (page.length === 0) break;
+
+    // Build JSONL and split by file size within this page
+    const lines = page.map((c) => buildJsonlLine(c, promptContent));
+    const subChunks = chunkLines(lines);
+
+    for (const subChunk of subChunks) {
+      const jobId = generateId();
+      try {
+        const fileName = `batch_chunk_${chunkIndex}_${Date.now()}.jsonl`;
+        const fileId = await uploadJsonlToOpenAI(subChunk, fileName, openAIKey);
+        const batchId = await createOpenAIBatch(fileId, openAIKey);
+
+        const job: BatchJob = {
+          id: jobId,
+          openai_batch_id: batchId,
+          openai_file_id: fileId,
+          output_file_id: null,
+          status: 'validating',
+          prompt_id: promptId ?? null,
+          prompt_content: promptContent,
+          chunk_index: chunkIndex,
+          total_chunks: 0, // back-filled below once we know the final count
+          total_conversations: subChunk.length,
+          completed_conversations: 0,
+          failed_conversations: 0,
+          imported_count: 0,
+          error_message: null,
+          created_at: now,
+          submitted_at: now,
+          completed_at: null,
+        };
+
+        await dbInsertBatchJob(job);
+        createdJobs.push(job);
+      } catch (e) {
+        const failedJob: BatchJob = {
+          id: jobId,
+          openai_batch_id: null,
+          openai_file_id: null,
+          output_file_id: null,
+          status: 'failed',
+          prompt_id: promptId ?? null,
+          prompt_content: promptContent,
+          chunk_index: chunkIndex,
+          total_chunks: 0,
+          total_conversations: subChunk.length,
+          completed_conversations: 0,
+          failed_conversations: subChunk.length,
+          imported_count: 0,
+          error_message: (e as Error).message,
+          created_at: now,
+          submitted_at: null,
+          completed_at: null,
+        };
+        try { await dbInsertBatchJob(failedJob); } catch (dbErr) {
+          console.error('[batch-analysis] failed to save failed job record:', dbErr);
+        }
+        createdJobs.push(failedJob);
+      }
+      chunkIndex++;
+    }
+
+    from += page.length;
+    if (page.length < pageLimit) break; // last page
   }
 
+  // Step 3 — back-fill total_chunks now that we know the real count
+  const totalChunks = createdJobs.length;
+  await Promise.all(
+    createdJobs.map((job) => dbUpdateBatchJob(job.id, { total_chunks: totalChunks }))
+  );
+
   return NextResponse.json({
-    jobs: createdJobs,
-    totalConversations: conversations.length,
+    jobs: createdJobs.map((j) => ({ ...j, total_chunks: totalChunks })),
+    totalConversations: effectiveTotal,
     totalChunks,
   });
 }
@@ -411,6 +437,29 @@ export async function PATCH(req: NextRequest) {
         last_prompt_content: promptContent,
         analyzed_at: now,
       });
+
+      const run: AnalysisRun = {
+        id: generateId(),
+        conversation_id: convId,
+        conversation_title: null,
+        player_name: null,
+        analyzed_at: now,
+        prompt_id: promptId ?? null,
+        prompt_title: null,
+        prompt_content: promptContent,
+        summary: analysisText,
+        language: null,
+        dissatisfaction_severity: null,
+        issue_category: null,
+        resolution_status: null,
+        key_quotes: null,
+        agent_performance_score: null,
+        agent_performance_notes: null,
+        recommended_action: null,
+        is_alert_worthy: false,
+        alert_reason: null,
+      };
+      await dbInsertAnalysisRun(run);
 
       imported++;
     } catch {

@@ -488,28 +488,29 @@ export async function getUnanalyzedConversationsByDate(date: string): Promise<Mi
   return (data ?? []) as MinimalConversation[];
 }
 
-export async function getUnanalyzedConversations(): Promise<MinimalConversation[]> {
-  const PAGE_SIZE = 1000;
-  const all: MinimalConversation[] = [];
-  let from = 0;
+// Returns a count only — no data transfer, used to pre-check before heavy work
+export async function countUnanalyzedConversations(): Promise<number> {
+  const { count, error } = await supabase
+    .from('conversations')
+    .select('id', { count: 'exact', head: true })
+    .is('summary', null)
+    .not('original_text', 'is', null);
+  if (error) throw new Error(`[db] count unanalyzed conversations: ${error.message}`);
+  return count ?? 0;
+}
 
-  while (true) {
-    const { data, error } = await supabase
-      .from('conversations')
-      .select('id, intercom_id, player_name, player_email, agent_name, brand, original_text')
-      .is('summary', null)
-      .not('original_text', 'is', null)
-      .range(from, from + PAGE_SIZE - 1);
-
-    if (error) throw new Error(`[db] get unanalyzed conversations: ${error.message}`);
-    if (!data || data.length === 0) break;
-
-    all.push(...(data as MinimalConversation[]));
-    if (data.length < PAGE_SIZE) break; // last page
-    from += PAGE_SIZE;
-  }
-
-  return all;
+// Fetches one page of unanalyzed conversations — used by the batch POST handler
+// so it can process 10k rows at a time instead of loading the full dataset at once.
+export async function getUnanalyzedConversationsPage(from: number, limit: number): Promise<MinimalConversation[]> {
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('id, intercom_id, player_name, player_email, agent_name, brand, original_text')
+    .is('summary', null)
+    .not('original_text', 'is', null)
+    .order('id')
+    .range(from, from + limit - 1);
+  if (error) throw new Error(`[db] get unanalyzed conversations page: ${error.message}`);
+  return (data ?? []) as MinimalConversation[];
 }
 
 // Writes only the AI analysis fields — does NOT overwrite Intercom metadata
