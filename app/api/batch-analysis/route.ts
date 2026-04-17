@@ -21,10 +21,16 @@ export const maxDuration = 300;
 
 // ── Rate-limit / size guards ───────────────────────────────────────────────
 // OpenAI Batch API limits: 50k requests per file, 100 MB per file.
-// Each conversation at ~5-8 KB of JSONL → 10k requests ≈ 50-80 MB, safely
-// under both limits and well within the enqueued-token budget for Tier-1 keys.
-const MAX_REQUESTS_PER_CHUNK = 10_000;
+// Chunk size kept at 2,500 to stay well under the 2M enqueued-token org limit
+// on gpt-4o-mini (Tier 1). At ~500 tokens/conversation that's ~1.25M tokens
+// per batch — a comfortable 4× safety margin.
+const MAX_REQUESTS_PER_CHUNK = 2_500;
 const MAX_FILE_BYTES = 90 * 1024 * 1024; // 90 MB hard cap
+// Only submit 1 OpenAI batch per POST call to stay under the 2M enqueued-token
+// org limit on gpt-4o-mini (Tier 1). Re-call POST after the current batch
+// completes — the endpoint re-queries WHERE summary IS NULL, so it naturally
+// picks up where it left off with no risk of re-processing.
+const MAX_CHUNKS_PER_SUBMISSION = 1;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -194,6 +200,28 @@ async function _POST(req: NextRequest) {
     return NextResponse.json({ message: 'No unanalyzed conversations found.', jobs: [] });
   }
 
+  // Pre-flight: block submission if batches are already active to avoid hitting
+  // OpenAI's 2M enqueued-token limit. The user should wait for in-progress
+  // batches to complete, then call POST again — unanalyzed rows are picked up
+  // automatically via the WHERE summary IS NULL query.
+  let existingJobs: BatchJob[];
+  try {
+    existingJobs = await dbGetBatchJobs();
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+  }
+  const activeStatuses: BatchJobStatus[] = ['validating', 'in_progress', 'finalizing'];
+  const activeJobCount = existingJobs.filter((j) => activeStatuses.includes(j.status)).length;
+  if (activeJobCount >= MAX_CHUNKS_PER_SUBMISSION) {
+    return NextResponse.json(
+      {
+        error: `${activeJobCount} batch(es) are still in progress. Wait for them to complete, then submit again — remaining conversations will be picked up automatically.`,
+        activeJobCount,
+      },
+      { status: 429 },
+    );
+  }
+
   // Cap to testLimit when provided
   const effectiveTotal = (testLimit && testLimit > 0)
     ? Math.min(testLimit, totalAvailable)
@@ -209,6 +237,7 @@ async function _POST(req: NextRequest) {
   let from = 0;
   let chunkIndex = 0;
   let buffer: MinimalConversation[] = [];
+  let submittedChunks = 0;
 
   const flushBuffer = async () => {
     if (buffer.length === 0) return;
@@ -242,6 +271,7 @@ async function _POST(req: NextRequest) {
         };
         await dbInsertBatchJob(job);
         createdJobs.push(job);
+        submittedChunks++;
       } catch (e) {
         const failedJob: BatchJob = {
           id: jobId,
@@ -268,6 +298,9 @@ async function _POST(req: NextRequest) {
         createdJobs.push(failedJob);
       }
       chunkIndex++;
+      // Stop submitting once we reach the per-call limit to avoid the 2M
+      // enqueued-token cap. Remaining conversations are picked up on the next POST.
+      if (submittedChunks >= MAX_CHUNKS_PER_SUBMISSION) break;
     }
   };
 
@@ -296,6 +329,9 @@ async function _POST(req: NextRequest) {
       }
     }
 
+    // Stop fetching more pages once we've hit the per-call submission cap
+    if (submittedChunks >= MAX_CHUNKS_PER_SUBMISSION) break;
+
     if (page.length < pageLimit) break;
   }
 
@@ -305,10 +341,18 @@ async function _POST(req: NextRequest) {
     createdJobs.map((job) => dbUpdateBatchJob(job.id, { total_chunks: totalChunks }))
   );
 
+  const totalSubmitted = createdJobs.reduce((sum, j) => sum + (j.total_conversations ?? 0), 0);
+  const remaining = effectiveTotal - totalSubmitted;
+
   return NextResponse.json({
     jobs: createdJobs.map((j) => ({ ...j, total_chunks: totalChunks })),
     totalConversations: effectiveTotal,
+    totalSubmitted,
+    remaining,
     totalChunks,
+    ...(remaining > 0 && {
+      message: `Submitted ${totalSubmitted} conversation(s). ${remaining} remain — re-submit after this batch completes.`,
+    }),
   });
 }
 

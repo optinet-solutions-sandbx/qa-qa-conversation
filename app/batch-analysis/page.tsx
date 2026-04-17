@@ -109,7 +109,8 @@ export default function BatchAnalysisPage() {
   const [submitting, setSubmitting] = useState(false);
   const [testLimit, setTestLimit] = useState<string>('');
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [submitResult, setSubmitResult] = useState<{ totalConversations: number; totalChunks: number; isTest: boolean } | null>(null);
+  const [submitWarning, setSubmitWarning] = useState<string | null>(null);
+  const [submitResult, setSubmitResult] = useState<{ totalConversations: number; totalSubmitted: number; remaining: number; totalChunks: number; isTest: boolean } | null>(null);
 
   const [importingJobId, setImportingJobId] = useState<string | null>(null);
   const [importResults, setImportResults] = useState<Record<string, { imported: number; failed: number; resumed_from: number }>>({});
@@ -171,6 +172,7 @@ export default function BatchAnalysisPage() {
 
     setSubmitting(true);
     setSubmitError(null);
+    setSubmitWarning(null);
     setSubmitResult(null);
 
     try {
@@ -184,13 +186,25 @@ export default function BatchAnalysisPage() {
         }),
       });
       const data = await res.json();
+
+      if (res.status === 429) {
+        // Active batches are blocking — show as a warning, not an error
+        setSubmitWarning(data.error ?? 'Active batches in progress. Wait for them to complete, then submit again.');
+        return;
+      }
       if (!res.ok) throw new Error(data.error ?? 'Submission failed');
 
-      if (data.message) {
+      if (data.message && !data.jobs?.length) {
         // "No unanalyzed conversations" case
         setSubmitError(data.message);
       } else {
-        setSubmitResult({ totalConversations: data.totalConversations, totalChunks: data.totalChunks, isTest: !!testLimit });
+        setSubmitResult({
+          totalConversations: data.totalConversations,
+          totalSubmitted: data.totalSubmitted ?? data.totalConversations,
+          remaining: data.remaining ?? 0,
+          totalChunks: data.totalChunks,
+          isTest: !!testLimit,
+        });
         await fetchJobs(true);
       }
     } catch (e) {
@@ -375,14 +389,25 @@ export default function BatchAnalysisPage() {
           <p className="text-xs text-red-400 bg-red-400/10 rounded-lg px-3 py-2">{submitError}</p>
         )}
 
+        {submitWarning && (
+          <p className="text-xs text-yellow-400 bg-yellow-400/10 rounded-lg px-3 py-2">{submitWarning}</p>
+        )}
+
         {submitResult && (
-          <p className="text-xs text-green-400 bg-green-400/10 rounded-lg px-3 py-2">
-            Submitted {submitResult.totalConversations.toLocaleString()} conversations in{' '}
-            {submitResult.totalChunks} batch job{submitResult.totalChunks !== 1 ? 's' : ''}.{' '}
-            {submitResult.isTest
-              ? 'Test batch — results are typically ready within a few minutes.'
-              : 'Results are typically ready within a few hours (max 24h).'}
-          </p>
+          <div className="text-xs rounded-lg px-3 py-2 bg-green-400/10 space-y-1">
+            <p className="text-green-400">
+              Submitted {submitResult.totalSubmitted.toLocaleString()} conversations in{' '}
+              {submitResult.totalChunks} batch job{submitResult.totalChunks !== 1 ? 's' : ''}.{' '}
+              {submitResult.isTest
+                ? 'Test batch — results are typically ready within a few minutes.'
+                : 'Results are typically ready within a few hours (max 24h).'}
+            </p>
+            {submitResult.remaining > 0 && (
+              <p className="text-yellow-400">
+                {submitResult.remaining.toLocaleString()} conversations remaining — submit again after this batch completes.
+              </p>
+            )}
+          </div>
         )}
 
         <button
