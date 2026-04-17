@@ -113,7 +113,8 @@ export const useStore = create<AppState>((set) => ({
 
     const remote = await loadFromSupabase();
     if (remote) {
-      set({ conversations: remote.conversations, prompts: remote.prompts ?? [], currentUser: user, isLoaded: true });
+      // Only load prompts — conversations are fetched per-page by ConversationList
+      set({ prompts: remote.prompts ?? [], currentUser: user, isLoaded: true });
       return;
     }
 

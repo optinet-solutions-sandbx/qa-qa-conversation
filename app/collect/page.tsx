@@ -397,13 +397,6 @@ export default function CollectPage() {
   const totalPages = Math.ceil(total / PER_PAGE);
   const isRunning = syncJob?.status === 'running';
 
-  /** Returns up to 7 page numbers as a stable window centred on current page */
-  function pageWindow(): number[] {
-    const count = Math.min(totalPages, 7);
-    const start = Math.max(0, Math.min(page - Math.floor(count / 2), totalPages - count));
-    return Array.from({ length: count }, (_, i) => start + i);
-  }
-
   return (
     <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
 
@@ -561,16 +554,26 @@ export default function CollectPage() {
               <button onClick={() => loadTable(page - 1, date, search)} disabled={page === 0} className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">
                 <IconChevronLeft />
               </button>
-              {pageWindow().map((p) => (
-                <button
-                  key={p}
-                  onClick={() => loadTable(p, date, search)}
-                  className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${p === page ? 'bg-slate-800 text-white' : 'border border-slate-200 text-slate-500 hover:bg-slate-50'}`}
-                >
-                  {p + 1}
-                </button>
-              ))}
-              <button onClick={() => loadTable(page + 1, date, search)} disabled={page >= totalPages - 1} className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed">
+              {Array.from({ length: Math.min(totalPages, 7) }, (_, i) => {
+                const start = Math.max(0, Math.min(page - 3, totalPages - 7));
+                const pageNum = start + i;
+                return (
+                  <button
+                    key={`page-${pageNum}`}
+                    onClick={() => loadTable(pageNum, date, search)}
+                    className={`w-8 h-8 rounded-lg text-xs font-medium transition-colors ${
+                      pageNum === page ? 'bg-slate-800 text-white' : 'border border-slate-200 text-slate-500 hover:bg-slate-50'
+                    }`}
+                  >
+                    {pageNum + 1}
+                  </button>
+                );
+              })}
+              <button
+                onClick={() => loadTable(page + 1, date, search)}
+                disabled={page >= totalPages - 1}
+                className="p-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
                 <IconChevronRight />
               </button>
             </div>

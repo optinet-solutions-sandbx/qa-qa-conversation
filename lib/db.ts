@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { Conversation, ConversationNote, PromptVersion, AnalysisRun, SyncJob } from './types';
+import type { Conversation, ConversationNote, PromptVersion, AnalysisRun, SyncJob, BatchJob, BatchJobStatus } from './types';
 import { cestDateToUnixRange } from './intercom';
 
 // ── Shared row mapper ──────────────────────────────────────────────────────
@@ -259,6 +259,20 @@ export async function dbDeleteAnalysisRun(id: string): Promise<void> {
   if (error) throw new Error(`[db] delete analysis run: ${error.message}`);
 }
 
+export async function getConversationMetadataBatch(
+  ids: string[],
+): Promise<Map<string, { title: string | null; player_name: string | null }>> {
+  if (ids.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('id, title, player_name')
+    .in('id', ids);
+  if (error) return new Map();
+  return new Map(
+    (data ?? []).map((r) => [r.id, { title: r.title ?? null, player_name: r.player_name ?? null }]),
+  );
+}
+
 export async function getExistingIntercomIds(ids: string[]): Promise<Set<string>> {
   if (ids.length === 0) return new Set();
   const { data, error } = await supabase
@@ -313,6 +327,34 @@ export async function loadConversationsByDate(
   };
 }
 
+export async function getConversationById(id: string): Promise<Conversation | null> {
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('*')
+    .eq('id', id)
+    .single();
+  if (error || !data) return null;
+  return mapConversationRow(data);
+}
+
+export async function loadConversations(
+  page = 0,
+  perPage = 24,
+): Promise<{ conversations: Conversation[]; total: number }> {
+  const from = page * perPage;
+  const to = from + perPage - 1;
+  const { data, error, count } = await supabase
+    .from('conversations')
+    .select('*', { count: 'exact' })
+    .order('analyzed_at', { ascending: false })
+    .range(from, to);
+  if (error) throw new Error(`[db] loadConversations: ${error.message}`);
+  return {
+    conversations: (data ?? []).map((c) => mapConversationRow(c)),
+    total: count ?? 0,
+  };
+}
+
 export async function loadAnalysisRun(id: string): Promise<AnalysisRun | null> {
   const { data, error } = await supabase
     .from('analysis_runs')
@@ -323,28 +365,224 @@ export async function loadAnalysisRun(id: string): Promise<AnalysisRun | null> {
   return data as AnalysisRun;
 }
 
+// ── Batch jobs ─────────────────────────────────────────────────────────────
+//
+// Required Supabase table (run once in the dashboard):
+//
+// CREATE TABLE batch_jobs (
+//   id                    TEXT PRIMARY KEY,
+//   openai_batch_id       TEXT,
+//   openai_file_id        TEXT,
+//   output_file_id        TEXT,
+//   status                TEXT NOT NULL DEFAULT 'pending',
+//   prompt_id             TEXT,
+//   prompt_content        TEXT,
+//   chunk_index           INT  DEFAULT 0,
+//   total_chunks          INT  DEFAULT 1,
+//   total_conversations   INT  DEFAULT 0,
+//   completed_conversations INT DEFAULT 0,
+//   failed_conversations  INT  DEFAULT 0,
+//   imported_count        INT  DEFAULT 0,
+//   error_message         TEXT,
+//   created_at            TIMESTAMPTZ DEFAULT NOW(),
+//   submitted_at          TIMESTAMPTZ,
+//   completed_at          TIMESTAMPTZ
+// );
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mapBatchJobRow(r: Record<string, any>): BatchJob {
+  return {
+    id: r.id,
+    openai_batch_id: r.openai_batch_id ?? null,
+    openai_file_id: r.openai_file_id ?? null,
+    output_file_id: r.output_file_id ?? null,
+    status: (r.status ?? 'pending') as BatchJobStatus,
+    prompt_id: r.prompt_id ?? null,
+    prompt_content: r.prompt_content ?? null,
+    chunk_index: r.chunk_index ?? 0,
+    total_chunks: r.total_chunks ?? 1,
+    total_conversations: r.total_conversations ?? 0,
+    completed_conversations: r.completed_conversations ?? 0,
+    failed_conversations: r.failed_conversations ?? 0,
+    imported_count: r.imported_count ?? 0,
+    error_message: r.error_message ?? null,
+    created_at: r.created_at,
+    submitted_at: r.submitted_at ?? null,
+    completed_at: r.completed_at ?? null,
+  };
+}
+
+export async function dbInsertBatchJob(job: BatchJob): Promise<void> {
+  const { error } = await supabase.from('batch_jobs').insert({
+    id: job.id,
+    openai_batch_id: job.openai_batch_id,
+    openai_file_id: job.openai_file_id,
+    output_file_id: job.output_file_id,
+    status: job.status,
+    prompt_id: job.prompt_id,
+    prompt_content: job.prompt_content,
+    chunk_index: job.chunk_index,
+    total_chunks: job.total_chunks,
+    total_conversations: job.total_conversations,
+    completed_conversations: job.completed_conversations,
+    failed_conversations: job.failed_conversations,
+    imported_count: job.imported_count,
+    error_message: job.error_message,
+    submitted_at: job.submitted_at,
+    completed_at: job.completed_at,
+  });
+  if (error) throw new Error(`[db] insert batch job: ${error.message}`);
+}
+
+export async function dbUpdateBatchJob(id: string, fields: Partial<BatchJob>): Promise<void> {
+  const { error } = await supabase.from('batch_jobs').update(fields).eq('id', id);
+  if (error) throw new Error(`[db] update batch job: ${error.message}`);
+}
+
+export async function dbGetBatchJobs(): Promise<BatchJob[]> {
+  const { data, error } = await supabase
+    .from('batch_jobs')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) throw new Error(`[db] get batch jobs: ${error.message}`);
+  return (data ?? []).map(mapBatchJobRow);
+}
+
+export async function dbGetBatchJobById(id: string): Promise<BatchJob | null> {
+  const { data, error } = await supabase
+    .from('batch_jobs')
+    .select('*')
+    .eq('id', id)
+    .single();
+  if (error) return null;
+  return mapBatchJobRow(data);
+}
+
+// Minimal row shape used to build Batch API JSONL without loading full conversations
+export interface MinimalConversation {
+  id: string;
+  intercom_id: string | null;
+  player_name: string | null;
+  player_email: string | null;
+  agent_name: string | null;
+  brand: string | null;
+  original_text: string | null;
+}
+
+export async function dbGetActivePrompt(): Promise<PromptVersion | null> {
+  const { data, error } = await supabase
+    .from('prompts')
+    .select('*')
+    .eq('is_active', true)
+    .limit(1)
+    .single();
+  if (error || !data) return null;
+  return {
+    id: data.id,
+    title: data.title ?? 'Untitled',
+    content: data.content ?? '',
+    is_active: data.is_active ?? true,
+    created_at: data.created_at,
+    updated_at: data.updated_at ?? data.created_at,
+  };
+}
+
+export async function getUnanalyzedConversationsByDate(date: string): Promise<MinimalConversation[]> {
+  const [startUnix, endUnix] = cestDateToUnixRange(date);
+  const startISO = new Date(startUnix * 1000).toISOString();
+  const endISO   = new Date(endUnix   * 1000).toISOString();
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('id, intercom_id, player_name, player_email, agent_name, brand, original_text')
+    .is('summary', null)
+    .not('original_text', 'is', null)
+    .gte('intercom_created_at', startISO)
+    .lte('intercom_created_at', endISO);
+  if (error) throw new Error(`[db] getUnanalyzedConversationsByDate: ${error.message}`);
+  return (data ?? []) as MinimalConversation[];
+}
+
+// Returns a count only — no data transfer, used to pre-check before heavy work
+export async function countUnanalyzedConversations(): Promise<number> {
+  const { count, error } = await supabase
+    .from('conversations')
+    .select('id', { count: 'exact', head: true })
+    .is('summary', null)
+    .not('original_text', 'is', null);
+  if (error) throw new Error(`[db] count unanalyzed conversations: ${error.message}`);
+  return count ?? 0;
+}
+
+// Fetches one page of unanalyzed conversations — used by the batch POST handler
+// so it can process 10k rows at a time instead of loading the full dataset at once.
+export async function getUnanalyzedConversationsPage(from: number, limit: number): Promise<MinimalConversation[]> {
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('id, intercom_id, player_name, player_email, agent_name, brand, original_text')
+    .is('summary', null)
+    .not('original_text', 'is', null)
+    .order('id')
+    .range(from, from + limit - 1);
+  if (error) throw new Error(`[db] get unanalyzed conversations page: ${error.message}`);
+  return (data ?? []) as MinimalConversation[];
+}
+
+// Writes only the AI analysis fields — does NOT overwrite Intercom metadata
+export async function dbUpdateAnalysisFields(
+  id: string,
+  fields: {
+    summary: string;
+    last_prompt_id: string | null;
+    last_prompt_content: string | null;
+    analyzed_at: string;
+  }
+): Promise<void> {
+  const { error } = await supabase
+    .from('conversations')
+    .update(fields)
+    .eq('id', id);
+  if (error) throw new Error(`[db] update analysis fields (${id}): ${error.message}`);
+}
+
+// Batch version: runs all conversation updates concurrently to avoid
+// thousands of sequential round trips during import.
+export async function dbBatchUpdateAnalysisFields(
+  rows: Array<{
+    id: string;
+    summary: string;
+    last_prompt_id: string | null;
+    last_prompt_content: string | null;
+    analyzed_at: string;
+  }>
+): Promise<void> {
+  await Promise.all(
+    rows.map(({ id, ...fields }) =>
+      supabase.from('conversations').update(fields).eq('id', id).then(({ error }) => {
+        if (error) throw new Error(`[db] update analysis fields (${id}): ${error.message}`);
+      })
+    )
+  );
+}
+
+// Batch insert for analysis_runs — single DB round trip instead of one per row.
+export async function dbBatchInsertAnalysisRuns(runs: import('@/lib/types').AnalysisRun[]): Promise<void> {
+  if (runs.length === 0) return;
+  const { error } = await supabase.from('analysis_runs').insert(runs);
+  if (error) throw new Error(`[db] batch insert analysis runs: ${error.message} (code: ${error.code})`);
+}
+
 // ── Load all state ─────────────────────────────────────────────────────────
 
 export async function loadFromSupabase(): Promise<{ conversations: Conversation[]; prompts: PromptVersion[] } | null> {
   try {
-    const [cRes, cnRes, pRes] = await Promise.all([
-      supabase.from('conversations').select('*').order('analyzed_at', { ascending: false }),
-      supabase.from('conversation_notes').select('*').order('created_at'),
-      supabase.from('prompts').select('*').order('created_at', { ascending: false }),
-    ]);
+    const { data, error } = await supabase
+      .from('prompts')
+      .select('*')
+      .order('created_at', { ascending: false });
 
-    if (cRes.error) throw cRes.error;
+    if (error) throw error;
 
-    const rawNotes = cnRes.error ? [] : (cnRes.data ?? []);
-
-    const conversations: Conversation[] = (cRes.data ?? []).map((c) => {
-      const notes: ConversationNote[] = rawNotes
-        .filter((n) => n.conversation_id === c.id)
-        .map((n) => ({ id: n.id, author: n.author, text: n.text, ts: n.created_at, system: n.is_system }));
-      return mapConversationRow(c, notes);
-    });
-
-    const prompts: PromptVersion[] = (pRes.data ?? []).map((p) => ({
+    const prompts: PromptVersion[] = (data ?? []).map((p) => ({
       id: p.id,
       title: p.title ?? 'Untitled',
       content: p.content ?? '',
@@ -353,7 +591,10 @@ export async function loadFromSupabase(): Promise<{ conversations: Conversation[
       updated_at: p.updated_at ?? p.created_at,
     }));
 
-    return { conversations, prompts };
+    // Conversations are NOT loaded here — ConversationList fetches its own
+    // page via /api/conversations. Loading all 20k+ rows into the store would
+    // crash the browser. conversations stays [] in the Zustand store.
+    return { conversations: [], prompts };
   } catch (e) {
     console.error('[db] loadFromSupabase failed:', e);
     return null;

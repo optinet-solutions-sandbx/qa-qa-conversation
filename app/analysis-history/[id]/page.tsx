@@ -2,19 +2,21 @@
 
 import { use, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useStore } from '@/lib/store';
-import type { AnalysisRun } from '@/lib/types';
+import type { AnalysisRun, Conversation } from '@/lib/types';
 import ConversationDetail from '@/components/conversations/ConversationDetail';
 
 export default function AnalysisRunPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
-  const { conversations, isLoaded } = useStore();
 
   const [run, setRun] = useState<AnalysisRun | null>(null);
+  const [conversation, setConversation] = useState<Conversation | null>(null);
   const [runLoading, setRunLoading] = useState(true);
+  const [convLoading, setConvLoading] = useState(false);
   const [notFound, setNotFound] = useState(false);
+  const [convNotFound, setConvNotFound] = useState(false);
 
+  // Fetch the analysis run
   useEffect(() => {
     fetch(`/api/analysis-runs?id=${encodeURIComponent(id)}`)
       .then(async (res) => {
@@ -25,7 +27,20 @@ export default function AnalysisRunPage({ params }: { params: Promise<{ id: stri
       .finally(() => setRunLoading(false));
   }, [id]);
 
-  if (!isLoaded || runLoading) {
+  // Fetch the conversation once we have the run's conversation_id
+  useEffect(() => {
+    if (!run?.conversation_id) return;
+    setConvLoading(true);
+    fetch(`/api/conversations?id=${encodeURIComponent(run.conversation_id)}`)
+      .then(async (res) => {
+        if (!res.ok) { setConvNotFound(true); return; }
+        setConversation(await res.json());
+      })
+      .catch(() => setConvNotFound(true))
+      .finally(() => setConvLoading(false));
+  }, [run?.conversation_id]);
+
+  if (runLoading || convLoading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="w-5 h-5 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
@@ -48,9 +63,7 @@ export default function AnalysisRunPage({ params }: { params: Promise<{ id: stri
     );
   }
 
-  const conversation = conversations.find((c) => c.id === run.conversation_id);
-
-  if (!conversation) {
+  if (convNotFound || !conversation) {
     return (
       <div className="flex flex-col items-center justify-center h-64 text-center p-6">
         <h2 className="text-base font-semibold text-slate-700 mb-2">Conversation not found</h2>

@@ -207,3 +207,35 @@ export interface SyncJob {
   finished_at: string | null;
   error_message: string | null;
 }
+
+// OpenAI statuses + our own 'importing' sentinel
+export type BatchJobStatus =
+  | 'pending'
+  | 'validating'
+  | 'in_progress'
+  | 'finalizing'
+  | 'completed'
+  | 'expired'
+  | 'cancelling'
+  | 'cancelled'
+  | 'failed';
+
+export interface BatchJob {
+  id: string;
+  openai_batch_id: string | null;
+  openai_file_id: string | null;   // input JSONL file uploaded to OpenAI
+  output_file_id: string | null;   // result JSONL, set when batch completes
+  status: BatchJobStatus;
+  prompt_id: string | null;
+  prompt_content: string | null;
+  chunk_index: number;             // 0-based — which chunk of the full dataset
+  total_chunks: number;            // how many chunks were submitted in this run
+  total_conversations: number;
+  completed_conversations: number;
+  failed_conversations: number;
+  imported_count: number;          // resume cursor: how many lines have been imported so far
+  error_message: string | null;
+  created_at: string;
+  submitted_at: string | null;
+  completed_at: string | null;
+}

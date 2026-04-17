@@ -47,7 +47,7 @@ export default function RootShell({ children }: { children: React.ReactNode }) {
               onMenuToggle={() => setSidebarOpen((v) => !v)}
               onAddConversation={pathname === '/' ? () => setShowAddConv(true) : undefined}
             />
-            <main className="flex-1 overflow-hidden flex flex-col">
+            <main className="flex-1 overflow-y-auto flex flex-col">
               {children}
             </main>
           </div>

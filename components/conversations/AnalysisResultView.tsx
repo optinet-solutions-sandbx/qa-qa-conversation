@@ -73,7 +73,7 @@ function ArrayValue({ items }: { items: unknown[] }) {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {rows.map((row, i) => (
-              <tr key={i}>
+              <tr key={`row-${i}`}>
                 {keys.map((k) => (
                   <td key={k} className="px-3 py-2 text-slate-700 break-words min-w-0 max-w-[200px]">
                     <PrimitiveValue value={row[k] as string | number | boolean | null} />
@@ -91,7 +91,7 @@ function ArrayValue({ items }: { items: unknown[] }) {
   return (
     <ol className="space-y-1 mt-0.5 list-none">
       {items.map((item, i) => (
-        <li key={i} className="flex gap-2.5 items-start">
+        <li key={`item-${i}`} className="flex gap-2.5 items-start">
           <span className="shrink-0 w-4 h-4 rounded-full bg-slate-100 text-slate-400 text-[10px] flex items-center justify-center mt-0.5 font-medium">
             {i + 1}
           </span>
