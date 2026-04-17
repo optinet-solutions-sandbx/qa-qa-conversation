@@ -1,5 +1,5 @@
 import { supabase } from './supabase';
-import type { Conversation, ConversationNote, PromptVersion, AnalysisRun, SyncJob, BatchJob, BatchJobStatus } from './types';
+import type { Conversation, ConversationNote, PromptVersion, AnalysisRun, SyncJob, BatchJob, BatchJobStatus, AiQuery } from './types';
 import { cestDateToUnixRange } from './intercom';
 
 // ── Shared row mapper ──────────────────────────────────────────────────────
@@ -617,4 +617,38 @@ export async function dbUpsertSyncJob(job: SyncJob): Promise<void> {
 export async function dbUpdateSyncJob(date: string, patch: Partial<SyncJob>): Promise<void> {
   const { error } = await supabase.from('sync_jobs').update(patch).eq('id', date);
   if (error) throw new Error(`[db] update sync job: ${error.message}`);
+}
+
+// ── Ask AI queries ─────────────────────────────────────────────────────────
+
+export async function dbInsertAiQuery(q: Omit<AiQuery, 'id' | 'created_at'>): Promise<AiQuery> {
+  const { data, error } = await supabase
+    .from('ai_queries')
+    .insert({
+      question: q.question,
+      answer: q.answer,
+      tools_used: q.tools_used,
+      is_irrelevant: q.is_irrelevant,
+    })
+    .select()
+    .single();
+  if (error) throw new Error(`[db] insert ai_query: ${error.message}`);
+  return data as AiQuery;
+}
+
+export async function dbGetAiQueries(page = 0, perPage = 25): Promise<{ queries: AiQuery[]; total: number }> {
+  const from = page * perPage;
+  const to = from + perPage - 1;
+  const { data, error, count } = await supabase
+    .from('ai_queries')
+    .select('*', { count: 'exact' })
+    .order('created_at', { ascending: false })
+    .range(from, to);
+  if (error) throw new Error(`[db] get ai_queries: ${error.message}`);
+  return { queries: (data ?? []) as AiQuery[], total: count ?? 0 };
+}
+
+export async function dbDeleteAiQuery(id: string): Promise<void> {
+  const { error } = await supabase.from('ai_queries').delete().eq('id', id);
+  if (error) throw new Error(`[db] delete ai_query: ${error.message}`);
 }

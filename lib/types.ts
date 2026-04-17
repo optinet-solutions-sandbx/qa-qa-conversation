@@ -220,6 +220,15 @@ export type BatchJobStatus =
   | 'cancelled'
   | 'failed';
 
+export interface AiQuery {
+  id: string;
+  question: string;
+  answer: string;
+  tools_used: unknown;           // ToolCallResult[] serialised
+  is_irrelevant: boolean;
+  created_at: string;
+}
+
 export interface BatchJob {
   id: string;
   openai_batch_id: string | null;
