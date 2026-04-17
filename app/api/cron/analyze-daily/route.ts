@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import {
-  getUnanalyzedConversationsByDate,
+  countUnanalyzedConversations,
+  getUnanalyzedConversationsPage,
   dbGetActivePrompt,
   dbGetBatchJobs,
   dbUpdateBatchJob,
   dbInsertBatchJob,
   dbUpdateAnalysisFields,
   dbInsertAnalysisRun,
+  type MinimalConversation,
 } from '@/lib/db';
 import type { BatchJob, BatchJobStatus, AnalysisRun } from '@/lib/types';
 import { generateId } from '@/lib/utils';
@@ -141,8 +143,10 @@ function mapOpenAIStatus(s: string): BatchJobStatus {
 // Step A — Poll OpenAI for active batch jobs, then auto-import any that are
 //           complete so results appear in the DB without manual intervention.
 //
-// Step B — Find yesterday's (or ?date=) conversations with no summary and
-//           submit them as a new OpenAI batch job using the active prompt.
+// Step B — Find ALL conversations with no summary and submit them as a new
+//           OpenAI batch job using the active prompt. Skips submission when
+//           active batch jobs are still in-flight (they already cover the
+//           unanalyzed set), so conversations are never submitted twice.
 //
 // Schedule this cron 1 hour after collect-daily (e.g. 3 AM CEST).
 
@@ -161,22 +165,17 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: 'OPENAI_API_KEY not configured' }, { status: 500 });
   }
 
-  const dateParam = req.nextUrl.searchParams.get('date');
-  const date = dateParam ?? yesterdayUtc();
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return NextResponse.json({ error: 'Invalid date format. Use YYYY-MM-DD.' }, { status: 400 });
-  }
-
   let autoImportedJobs = 0;
   let autoImportedConversations = 0;
   let newBatchJobs = 0;
   let newBatchConversations = 0;
 
   // ── STEP A: Poll active jobs + auto-import completed ones ─────────────────
+  const activeStatuses: BatchJobStatus[] = ['validating', 'in_progress', 'finalizing'];
+  let hasActiveJobs = false;
+
   try {
     const jobs = await dbGetBatchJobs();
-    const activeStatuses: BatchJobStatus[] = ['validating', 'in_progress', 'finalizing'];
 
     // 1. Poll OpenAI to refresh statuses for active jobs
     for (const job of jobs.filter((j) => j.openai_batch_id && activeStatuses.includes(j.status))) {
@@ -206,7 +205,7 @@ export async function GET(req: NextRequest) {
       (j) =>
         j.status === 'completed' &&
         j.output_file_id &&
-        (j.imported_count ?? 0) < j.total_conversations,
+        (j.imported_count ?? 0) < (j.completed_conversations ?? j.total_conversations),
     );
 
     for (const job of toImport) {
@@ -273,68 +272,82 @@ export async function GET(req: NextRequest) {
         autoImportedConversations += imported - startAt;
       } catch { continue; }
     }
+
+    // Check if any jobs are still active after polling (Step B should wait)
+    hasActiveJobs = jobs.some((j) => activeStatuses.includes(j.status));
   } catch (e) {
     console.error('[cron] analyze-daily step A error:', e);
   }
 
-  // ── STEP B: Submit new batch for unanalyzed conversations on target date ───
+  // ── STEP B: Submit batch for ALL unanalyzed conversations ─────────────────
+  //
+  // Skip when active batch jobs exist — they already cover the unanalyzed set
+  // and we don't want to submit the same conversations twice. On the next daily
+  // run, Step A will import those results and Step B will pick up any new ones.
   try {
-    const conversations = await getUnanalyzedConversationsByDate(date);
+    if (hasActiveJobs) {
+      console.log('[cron] analyze-daily step B skipped: active batch jobs still in-flight');
+    } else {
+      const totalUnanalyzed = await countUnanalyzedConversations();
 
-    if (conversations.length === 0) {
-      return NextResponse.json({
-        date,
-        auto_imported: { jobs: autoImportedJobs, conversations: autoImportedConversations },
-        new_batch: { jobs: 0, conversations: 0, message: 'No unanalyzed conversations for this date.' },
-      });
-    }
+      if (totalUnanalyzed === 0) {
+        console.log('[cron] analyze-daily step B: no unanalyzed conversations');
+      } else {
+        const prompt = await dbGetActivePrompt();
+        if (!prompt) {
+          console.warn('[cron] analyze-daily step B: no active prompt found');
+        } else {
+          // Fetch all unanalyzed conversations in pages
+          const PAGE_SIZE = 10_000;
+          const allConversations: MinimalConversation[] = [];
+          let offset = 0;
+          while (offset < totalUnanalyzed) {
+            const page = await getUnanalyzedConversationsPage(offset, PAGE_SIZE);
+            if (page.length === 0) break;
+            allConversations.push(...page);
+            offset += page.length;
+          }
 
-    const prompt = await dbGetActivePrompt();
-    if (!prompt) {
-      return NextResponse.json({
-        date,
-        auto_imported: { jobs: autoImportedJobs, conversations: autoImportedConversations },
-        new_batch: { jobs: 0, conversations: 0, message: 'No active prompt found. Set one in the Prompt Library.' },
-      });
-    }
+          const lines = allConversations.map((c) => buildJsonlLine(c, prompt.content));
+          const chunks = chunkLines(lines);
+          const totalChunks = chunks.length;
+          const now = new Date().toISOString();
 
-    const lines = conversations.map((c) => buildJsonlLine(c, prompt.content));
-    const chunks = chunkLines(lines);
-    const totalChunks = chunks.length;
-    const now = new Date().toISOString();
+          for (let i = 0; i < chunks.length; i++) {
+            const chunk = chunks[i];
+            const jobId = generateId();
+            try {
+              const fileName = `daily_${yesterdayUtc()}_chunk_${i}_${Date.now()}.jsonl`;
+              const fileId = await uploadJsonlToOpenAI(chunk, fileName, openAIKey);
+              const batchId = await createOpenAIBatch(fileId, openAIKey);
 
-    for (let i = 0; i < chunks.length; i++) {
-      const chunk = chunks[i];
-      const jobId = generateId();
-      try {
-        const fileName = `daily_${date}_chunk_${i}_${Date.now()}.jsonl`;
-        const fileId = await uploadJsonlToOpenAI(chunk, fileName, openAIKey);
-        const batchId = await createOpenAIBatch(fileId, openAIKey);
+              await dbInsertBatchJob({
+                id: jobId,
+                openai_batch_id: batchId,
+                openai_file_id: fileId,
+                output_file_id: null,
+                status: 'validating',
+                prompt_id: prompt.id,
+                prompt_content: prompt.content,
+                chunk_index: i,
+                total_chunks: totalChunks,
+                total_conversations: chunk.length,
+                completed_conversations: 0,
+                failed_conversations: 0,
+                imported_count: 0,
+                error_message: null,
+                created_at: now,
+                submitted_at: now,
+                completed_at: null,
+              });
 
-        await dbInsertBatchJob({
-          id: jobId,
-          openai_batch_id: batchId,
-          openai_file_id: fileId,
-          output_file_id: null,
-          status: 'validating',
-          prompt_id: prompt.id,
-          prompt_content: prompt.content,
-          chunk_index: i,
-          total_chunks: totalChunks,
-          total_conversations: chunk.length,
-          completed_conversations: 0,
-          failed_conversations: 0,
-          imported_count: 0,
-          error_message: null,
-          created_at: now,
-          submitted_at: now,
-          completed_at: null,
-        });
-
-        newBatchJobs++;
-        newBatchConversations += chunk.length;
-      } catch (e) {
-        console.error(`[cron] analyze-daily chunk ${i} failed:`, e);
+              newBatchJobs++;
+              newBatchConversations += chunk.length;
+            } catch (e) {
+              console.error(`[cron] analyze-daily chunk ${i} failed:`, e);
+            }
+          }
+        }
       }
     }
   } catch (e) {
@@ -342,11 +355,10 @@ export async function GET(req: NextRequest) {
   }
 
   console.log(
-    `[cron] analyze-daily ${date}: auto_imported=${autoImportedConversations} new_batch=${newBatchConversations}`,
+    `[cron] analyze-daily: auto_imported=${autoImportedConversations} new_batch=${newBatchConversations}`,
   );
 
   return NextResponse.json({
-    date,
     auto_imported: { jobs: autoImportedJobs, conversations: autoImportedConversations },
     new_batch: { jobs: newBatchJobs, conversations: newBatchConversations },
   });
