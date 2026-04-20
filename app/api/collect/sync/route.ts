@@ -173,7 +173,7 @@ export async function POST(req: NextRequest) {
 function buildConversation(data: ConversationFetchResult): Conversation {
   return {
     id: generateId(),
-    title: data.transcript?.split('\n')[0]?.replace(/^(Agent|User):\s*/i, '').slice(0, 80) || `Conversation ${data.intercom_id}`,
+    title: data.transcript?.split('\n')[0]?.replace(/^(Agent|User|Bot|Player):\s*/i, '').slice(0, 80) || `Conversation ${data.intercom_id}`,
     analyzed_at: new Date().toISOString(),
     intercom_id: data.intercom_id,
     intercom_created_at: data.intercom_created_at,
