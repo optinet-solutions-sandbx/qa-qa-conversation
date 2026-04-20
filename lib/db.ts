@@ -149,6 +149,13 @@ export async function dbUpdateConversation(c: Conversation): Promise<void> {
   if (error) throw new Error(`[db] update conversation: ${error.message}`);
 }
 
+export async function dbUpdateConversationByIntercomId(c: Conversation): Promise<void> {
+  if (!c.intercom_id) throw new Error('[db] update by intercom_id: missing intercom_id');
+  const { id: _id, ...row } = conversationRow(c);
+  const { error } = await supabase.from('conversations').update(row).eq('intercom_id', c.intercom_id);
+  if (error) throw new Error(`[db] update conversation by intercom_id: ${error.message}`);
+}
+
 export async function dbDeleteConversation(id: string): Promise<void> {
   // Delete analysis runs first (no FK cascade configured)
   await supabase.from('analysis_runs').delete().eq('conversation_id', id);

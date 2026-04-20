@@ -4,7 +4,7 @@ import { searchConversationsByDate, fetchIntercomData } from '@/lib/intercom';
 import {
   getExistingIntercomIds,
   dbInsertConversation,
-  dbUpdateConversation,
+  dbUpdateConversationByIntercomId,
   dbGetSyncJob,
   dbUpsertSyncJob,
   dbUpdateSyncJob,
@@ -104,7 +104,7 @@ export async function POST(req: NextRequest) {
         const data = await fetchIntercomData(intercomId, apiKey);
         const conv = buildConversation(data);
         if (existingIds.has(intercomId)) {
-          await dbUpdateConversation(conv);
+          await dbUpdateConversationByIntercomId(conv);
           results.push({ id: intercomId, status: 'updated' });
         } else {
           await dbInsertConversation(conv);

@@ -160,6 +160,7 @@ export async function searchConversationsByDate(
         value: [
           { field: 'created_at', operator: '>=', value: start },
           { field: 'created_at', operator: '<=', value: end },
+          { field: 'source.type', operator: '=', value: 'conversation' },
         ],
       },
       pagination: { per_page: 150, ...(cursor ? { starting_after: cursor } : {}) },
