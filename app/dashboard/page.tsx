@@ -31,7 +31,7 @@ interface DashboardData {
   brandBreakdown: LabelCount[];
   agentBreakdown: LabelCount[];
   conversationsByDate: DateCount[];
-  filterOptions: { brands: string[]; agents: string[]; categories: string[] };
+  filterOptions: { brands: string[]; agents: string[]; categories: string[]; issues: { category: string; items: string[] }[] };
 }
 
 // ── Colour palette ─────────────────────────────────────────────────────────
@@ -108,12 +108,18 @@ function Empty({ message }: { message: string }) {
   );
 }
 
-// ── Category multi-select ──────────────────────────────────────────────────
+// ── Generic multi-select ───────────────────────────────────────────────────
 
-function CategoryFilter({ options, selected, onChange }: {
-  options: string[];
+type IssueGroup = { category: string; items: string[] };
+
+function MultiSelectFilter({ options, groups, selected, onChange, placeholder, emptyText, disabled }: {
+  options?: string[];
+  groups?: IssueGroup[];
   selected: string[];
   onChange: (val: string[]) => void;
+  placeholder: string;
+  emptyText: string;
+  disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -126,39 +132,57 @@ function CategoryFilter({ options, selected, onChange }: {
     return () => document.removeEventListener('mousedown', handleClick);
   }, []);
 
-  const toggle = (cat: string) =>
-    onChange(selected.includes(cat) ? selected.filter((c) => c !== cat) : [...selected, cat]);
+  const toggle = (val: string) =>
+    onChange(selected.includes(val) ? selected.filter((v) => v !== val) : [...selected, val]);
 
-  const remove = (cat: string) => onChange(selected.filter((c) => c !== cat));
+  const remove = (val: string) => onChange(selected.filter((v) => v !== val));
+
+  const isEmpty = groups ? groups.length === 0 : (options ?? []).length === 0;
 
   return (
     <div className="flex flex-col gap-2">
       <div ref={ref} className="relative">
         <button
           type="button"
-          onClick={() => setOpen((o) => !o)}
-          className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 flex items-center gap-2 min-w-[180px] justify-between bg-white"
+          disabled={disabled}
+          onClick={() => !disabled && setOpen((o) => !o)}
+          className={`border rounded-lg px-3 py-1.5 text-sm flex items-center gap-2 min-w-[180px] justify-between transition-colors
+            ${disabled
+              ? 'border-slate-100 bg-slate-50 text-slate-300 cursor-not-allowed'
+              : 'border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500'}`}
         >
-          <span className="truncate">{selected.length === 0 ? 'All categories' : `${selected.length} selected`}</span>
+          <span className="truncate">{selected.length === 0 ? placeholder : `${selected.length} selected`}</span>
           <svg className={`w-3.5 h-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
           </svg>
         </button>
         {open && (
-          <div className="absolute z-20 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg py-1 min-w-[240px] max-h-64 overflow-y-auto">
-            {options.length === 0 && (
-              <p className="px-3 py-2 text-xs text-slate-400">No categories yet</p>
-            )}
-            {options.map((cat) => (
-              <label key={cat} className="flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={selected.includes(cat)}
-                  onChange={() => toggle(cat)}
-                  className="w-3.5 h-3.5 rounded border-slate-300 accent-blue-600"
-                />
-                {cat}
+          <div className="absolute z-20 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg py-1 min-w-[280px] max-h-72 overflow-y-auto">
+            {isEmpty && <p className="px-3 py-2 text-xs text-slate-400">{emptyText}</p>}
+
+            {/* Flat list (e.g. categories) */}
+            {!groups && (options ?? []).map((val) => (
+              <label key={val} className="flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 cursor-pointer text-sm text-slate-700">
+                <input type="checkbox" checked={selected.includes(val)} onChange={() => toggle(val)}
+                  className="w-3.5 h-3.5 rounded border-slate-300 accent-blue-600" />
+                {val}
               </label>
+            ))}
+
+            {/* Grouped list (e.g. issues) */}
+            {groups && groups.map(({ category, items }) => (
+              <div key={category}>
+                <p className="px-3 pt-2.5 pb-1 text-xs font-semibold text-slate-400 uppercase tracking-wide select-none">
+                  {category}
+                </p>
+                {items.map((val) => (
+                  <label key={val} className="flex items-center gap-2.5 px-3 py-1.5 hover:bg-slate-50 cursor-pointer text-sm text-slate-700">
+                    <input type="checkbox" checked={selected.includes(val)} onChange={() => toggle(val)}
+                      className="w-3.5 h-3.5 rounded border-slate-300 accent-blue-600" />
+                    {val}
+                  </label>
+                ))}
+              </div>
             ))}
           </div>
         )}
@@ -166,15 +190,11 @@ function CategoryFilter({ options, selected, onChange }: {
 
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-1.5">
-          {selected.map((cat) => (
-            <span key={cat} className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2.5 py-0.5 text-xs font-medium">
-              {cat}
-              <button
-                type="button"
-                onClick={() => remove(cat)}
-                className="ml-0.5 hover:text-blue-900 focus:outline-none"
-                aria-label={`Remove ${cat}`}
-              >
+          {selected.map((val) => (
+            <span key={val} className="inline-flex items-center gap-1 bg-blue-50 text-blue-700 border border-blue-200 rounded-full px-2.5 py-0.5 text-xs font-medium">
+              {val}
+              <button type="button" onClick={() => remove(val)}
+                className="ml-0.5 hover:text-blue-900 focus:outline-none" aria-label={`Remove ${val}`}>
                 <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                 </svg>
@@ -201,6 +221,7 @@ export default function DashboardPage() {
   const [brand, setBrand]             = useState('');
   const [agent, setAgent]             = useState('');
   const [categories, setCategories]   = useState<string[]>([]);
+  const [issues, setIssues]           = useState<string[]>([]);
 
   const navToConversations = useCallback((extra: Record<string, string>) => {
     const p = new URLSearchParams();
@@ -209,9 +230,10 @@ export default function DashboardPage() {
     if (brand)    p.set('brand',    brand);
     if (agent)    p.set('agent_name', agent);
     if (categories.length === 1) p.set('issue_category', categories[0]);
+    if (issues.length === 1)     p.set('issue_item', issues[0]);
     Object.entries(extra).forEach(([k, v]) => { if (v) p.set(k, v); });
     router.push(`/?${p}`);
-  }, [router, dateFrom, dateTo, brand, agent, categories]);
+  }, [router, dateFrom, dateTo, brand, agent, categories, issues]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -223,6 +245,7 @@ export default function DashboardPage() {
       if (brand)    params.set('brand',    brand);
       if (agent)    params.set('agent',    agent);
       categories.forEach((c) => params.append('category', c));
+      issues.forEach((i) => params.append('issue', i));
 
       const res = await fetch(`/api/dashboard?${params}`);
       if (!res.ok) throw new Error('Failed to load dashboard');
@@ -232,13 +255,30 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, brand, agent, categories]);
+  }, [dateFrom, dateTo, brand, agent, categories, issues]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const brandOptions    = data?.filterOptions.brands     ?? [];
   const agentOptions    = data?.filterOptions.agents     ?? [];
   const categoryOptions = data?.filterOptions.categories ?? [];
+  const issueGroups     = data?.filterOptions.issues     ?? [];
+
+  // When a category is selected, filter issue groups to only that category and
+  // auto-clear any selected issues that no longer belong.
+  const filteredIssueGroups = categories.length > 0
+    ? issueGroups.filter((g) => categories.includes(g.category))
+    : issueGroups;
+
+  const handleCategoryChange = useCallback((newCats: string[]) => {
+    setCategories(newCats);
+    if (newCats.length > 0) {
+      const available = new Set(
+        issueGroups.filter((g) => newCats.includes(g.category)).flatMap((g) => g.items)
+      );
+      setIssues((prev) => prev.filter((i) => available.has(i)));
+    }
+  }, [issueGroups]);
 
   // ── Render ───────────────────────────────────────────────────────────────
 
@@ -306,15 +346,32 @@ export default function DashboardPage() {
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Category</label>
-          <CategoryFilter
+          <MultiSelectFilter
             options={categoryOptions}
             selected={categories}
-            onChange={setCategories}
+            onChange={handleCategoryChange}
+            placeholder="All categories"
+            emptyText="No categories yet"
           />
         </div>
-        {(dateFrom || dateTo || brand || agent || categories.length > 0) && (
+        <div>
+          <label className="block text-xs font-medium text-slate-500 mb-1">Issue</label>
+          <MultiSelectFilter
+            {...(categories.length === 0
+              ? { groups: issueGroups }                                    // no category: grouped, with headers
+              : categories.length === 1
+                ? { options: filteredIssueGroups.flatMap((g) => g.items) } // 1 category: flat, no headers
+                : { groups: filteredIssueGroups })}                        // 2+ categories: grouped, headers visible
+            selected={issues}
+            onChange={setIssues}
+            placeholder={categories.length === 0 ? 'Select a category first' : 'All issues'}
+            emptyText="No issues yet"
+            disabled={categories.length === 0}
+          />
+        </div>
+        {(dateFrom || dateTo || brand || agent || categories.length > 0 || issues.length > 0) && (
           <button
-            onClick={() => { setDateFrom(''); setDateTo(''); setBrand(''); setAgent(''); setCategories([]); }}
+            onClick={() => { setDateFrom(''); setDateTo(''); setBrand(''); setAgent(''); setCategories([]); setIssues([]); }}
             className="text-xs text-slate-400 hover:text-slate-600 underline pb-1.5"
           >
             Clear filters

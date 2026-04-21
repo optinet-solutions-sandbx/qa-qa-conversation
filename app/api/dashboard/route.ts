@@ -45,6 +45,7 @@ export async function GET(req: NextRequest) {
   const brand      = searchParams.get('brand');
   const agent      = searchParams.get('agent');
   const categories = searchParams.getAll('category');
+  const issues     = searchParams.getAll('issue');
 
   try {
     // ── Build base query filters (dates interpreted in CEST / UTC+2) ────────
@@ -168,6 +169,40 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => numPrefix(a.label) - numPrefix(b.label))
       .map(({ label }) => label);
 
+    // ── Collect issue options grouped by canonical category ───────────────────
+    // Strip leading "N. " from item labels so "1. Account Closure Requests" and
+    // "Account Closure Requests" deduplicate to the same entry.  The numeric
+    // order is preserved for sorting within each group.
+    const stripItemNum = (s: string) => s.replace(/^\d+\.\s*/, '').trim();
+    const itemNumOrder = (s: string) => { const m = s.match(/^(\d+)\./); return m ? parseInt(m[1], 10) : 999; };
+
+    const minIssueCount = Math.max(2, Math.ceil(rows.length * 0.001));
+    const allIssueFreq: Record<string, { label: string; catPrefix: number; order: number; count: number }> = {};
+    for (const { item, category } of parsed.flatMap((p) => p.items)) {
+      if (item === 'Unknown') continue;
+      const clean = stripItemNum(item);
+      if (!clean) continue;
+      const key = clean.toLowerCase();
+      const ord = itemNumOrder(item);
+      if (!allIssueFreq[key]) {
+        allIssueFreq[key] = { label: clean, catPrefix: numPrefix(category), order: ord, count: 0 };
+      } else if (ord < allIssueFreq[key].order) {
+        allIssueFreq[key].order = ord; // keep lowest numeric position seen
+      }
+      allIssueFreq[key].count++;
+    }
+    const qualifiedIssues = Object.values(allIssueFreq).filter(({ count }) => count >= minIssueCount);
+    const groupedIssues = canonicalCategories
+      .map((category) => {
+        const pfx = numPrefix(category);
+        const items = qualifiedIssues
+          .filter((x) => x.catPrefix === pfx)
+          .sort((a, b) => a.order !== b.order ? a.order - b.order : a.label.localeCompare(b.label))
+          .map((x) => x.label);
+        return { category, items };
+      })
+      .filter(({ items }) => items.length > 0);
+
     // ── Filter by category (in-memory, since categories live in summary JSON) ──
     // Match by exact key OR by numeric prefix so that selecting a canonical like
     // "1. Account Closure & Self-Exclusion Requests" also catches DB variants
@@ -178,8 +213,19 @@ export async function GET(req: NextRequest) {
       const ck = c.toLowerCase().trim();
       return categoryKeys.includes(ck) || categoryPrefixes.has(numPrefix(ck));
     };
-    const filteredRows   = categoryKeys.length > 0 ? rows.filter((_, i) => parsed[i].categories.some((c) => matchesCategory(c))) : rows;
-    const filteredParsed = categoryKeys.length > 0 ? parsed.filter((p)  => p.categories.some((c) => matchesCategory(c))) : parsed;
+
+    // ── Filter by issue item (strip "N. " prefix before comparing) ────────────
+    const issueKeys = issues.map((i) => stripItemNum(i).toLowerCase());
+    const matchesIssue = (item: string) => issueKeys.includes(stripItemNum(item).toLowerCase());
+
+    let filteredRows   = categoryKeys.length > 0 ? rows.filter((_, i) => parsed[i].categories.some((c) => matchesCategory(c))) : rows;
+    let filteredParsed = categoryKeys.length > 0 ? parsed.filter((p)  => p.categories.some((c) => matchesCategory(c))) : parsed;
+
+    if (issueKeys.length > 0) {
+      const keep = filteredParsed.map((p) => p.items.some((x) => matchesIssue(x.item)));
+      filteredRows   = filteredRows.filter((_, i) => keep[i]);
+      filteredParsed = filteredParsed.filter((_, i) => keep[i]);
+    }
 
     // ── Resolution breakdown ─────────────────────────────────────────────
     const resolutionBreakdown = countBy(filteredParsed, (p) => p.resolution_status);
@@ -234,7 +280,7 @@ export async function GET(req: NextRequest) {
     // When a category filter is active we can't use the DB RPC (it has no category
     // param), so we group the already-filtered in-memory rows by CEST date instead.
     let conversationsByDate: { date: string; count: number }[];
-    if (categoryKeys.length > 0) {
+    if (categoryKeys.length > 0 || issueKeys.length > 0) {
       const dateCounts: Record<string, number> = {};
       for (const r of filteredRows) {
         const iso = r.intercom_created_at as string | null;
@@ -277,14 +323,15 @@ export async function GET(req: NextRequest) {
     // When a category filter is active, the DB-level counts are global (the RPC
     // has no category param).  Use the in-memory filtered counts instead so the
     // stat cards reflect what the charts show.
-    const overviewAnalyzed  = categoryKeys.length > 0 ? filteredRows.length  : analyzed;
-    const overviewAlertWorthy = categoryKeys.length > 0
+    const hasInMemoryFilter = categoryKeys.length > 0 || issueKeys.length > 0;
+    const overviewAnalyzed  = hasInMemoryFilter ? filteredRows.length  : analyzed;
+    const overviewAlertWorthy = hasInMemoryFilter
       ? filteredRows.filter((r) => r.is_alert_worthy).length
       : alertWorthy;
     // "Total" and "Unanalyzed" require fetching non-analyzed rows we don't have;
     // fall back to the analyzed count so the numbers are coherent.
-    const overviewTotal     = categoryKeys.length > 0 ? filteredRows.length  : total;
-    const overviewUnanalyzed = categoryKeys.length > 0 ? 0 : total - analyzed;
+    const overviewTotal     = hasInMemoryFilter ? filteredRows.length  : total;
+    const overviewUnanalyzed = hasInMemoryFilter ? 0 : total - analyzed;
 
     return NextResponse.json({
       overview: {
@@ -306,6 +353,7 @@ export async function GET(req: NextRequest) {
         brands: uniqueBrands,
         agents: uniqueAgents,
         categories: allCategoryLabels,
+        issues: groupedIssues,
       },
     });
   } catch (e) {

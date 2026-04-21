@@ -387,6 +387,7 @@ export interface ConversationFilters {
   resolution_status?: string;
   dissatisfaction_severity?: string;
   issue_category?: string;
+  issue_item?: string;
   language?: string;
   brand?: string;
   agent_name?: string;
@@ -398,7 +399,7 @@ export interface ConversationFilters {
 
 export function needsJsonFilter(filters: ConversationFilters): boolean {
   return !!(filters.resolution_status || filters.dissatisfaction_severity ||
-            filters.issue_category    || filters.language);
+            filters.issue_category    || filters.issue_item || filters.language);
 }
 
 export async function loadConversations(
@@ -564,6 +565,20 @@ export async function loadConversationsWithJsonFilter(
           return catPrefixMatch ? parseInt(catPrefixMatch[1], 10) === vPrefix : false;
         }
         return false;
+      });
+    });
+  }
+
+  if (filters.issue_item) {
+    // Strip leading "N. " so "Account Closure Requests" matches "1. Account Closure Requests"
+    const v = filters.issue_item.replace(/^\d+\.\s*/, '').trim().toLowerCase();
+    filtered = filtered.filter((r) => {
+      const json = parseSummary(r.summary);
+      const results = Array.isArray(json?.results) ? json.results : [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return results.some((x: any) => {
+        const raw = (x.item as string | null)?.replace(/^\d+\.\s*/, '').trim().toLowerCase();
+        return raw === v;
       });
     });
   }

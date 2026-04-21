@@ -23,6 +23,7 @@ export async function GET(req: NextRequest) {
   if (sp.get('resolution_status'))        filters.resolution_status        = sp.get('resolution_status')!;
   if (sp.get('dissatisfaction_severity')) filters.dissatisfaction_severity = sp.get('dissatisfaction_severity')!;
   if (sp.get('issue_category'))           filters.issue_category           = sp.get('issue_category')!;
+  if (sp.get('issue_item'))               filters.issue_item               = sp.get('issue_item')!;
   if (sp.get('language'))                 filters.language                 = sp.get('language')!;
   if (sp.get('brand'))                    filters.brand                    = sp.get('brand')!;
   if (sp.get('agent_name'))               filters.agent_name               = sp.get('agent_name')!;
