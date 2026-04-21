@@ -158,11 +158,15 @@ export async function GET(req: NextRequest) {
         delete allCategoryFreq[key];
       }
     }
-    // Ensure all canonical categories always appear in the dropdown
+    // Ensure all canonical categories always appear in the dropdown regardless of count
     for (const label of canonicalCategories) {
       const key = label.toLowerCase().trim();
-      if (!allCategoryFreq[key]) allCategoryFreq[key] = { count: minCategoryCount, label };
-      else allCategoryFreq[key].label = label; // enforce canonical label text
+      if (!allCategoryFreq[key]) {
+        allCategoryFreq[key] = { count: minCategoryCount, label };
+      } else {
+        allCategoryFreq[key].label = label;
+        allCategoryFreq[key].count = Math.max(allCategoryFreq[key].count, minCategoryCount);
+      }
     }
     const allCategoryLabels = Object.values(allCategoryFreq)
       .filter(({ count }) => count >= minCategoryCount)
