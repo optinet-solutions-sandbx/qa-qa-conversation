@@ -464,10 +464,10 @@ export default function DashboardPage() {
                   <ResponsiveContainer width="100%" height={220}>
                     <LineChart
                       data={data.conversationsByDate}
-                      margin={{ top: 4, right: 8, left: -20, bottom: 0 }}
+                      margin={{ top: 4, right: 8, left: -20, bottom: 40 }}
                     >
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                      <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 11, fill: '#94a3b8' }} interval="preserveStartEnd" />
+                      <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} interval={0} angle={-45} textAnchor="end" />
                       <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
                       <Tooltip content={<ChartTooltip />} />
                       <Line

@@ -3,7 +3,6 @@ import type { NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { cestDateToUnixRange } from '@/lib/intercom';
 
-// ── Helpers ────────────────────────────────────────────────────────────────
 
 function stripFences(text: string): string {
   return text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '').trim();
@@ -308,6 +307,24 @@ export async function GET(req: NextRequest) {
         date:  r.cest_date,
         count: r.conversation_count,
       }));
+    }
+
+    // Limit to last 30 days when no dateFrom filter, and fill gaps with 0 through today (CEST)
+    {
+      const todayCEST = new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const endDate   = dateTo && dateTo < todayCEST ? dateTo : todayCEST;
+      const startDate = dateFrom
+        ? (conversationsByDate[0]?.date ?? endDate)
+        : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const countByDate = Object.fromEntries(conversationsByDate.map((d) => [d.date, d.count]));
+      const filled: { date: string; count: number }[] = [];
+      const start = new Date(startDate + 'T00:00:00Z');
+      const end   = new Date(endDate   + 'T00:00:00Z');
+      for (const cur = new Date(start); cur <= end; cur.setUTCDate(cur.getUTCDate() + 1)) {
+        const key = cur.toISOString().slice(0, 10);
+        filled.push({ date: key, count: countByDate[key] ?? 0 });
+      }
+      conversationsByDate = filled;
     }
 
     // ── Filter options (for dropdowns) ───────────────────────────────────
