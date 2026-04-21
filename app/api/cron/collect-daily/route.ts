@@ -1,8 +1,70 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { waitUntil } from '@vercel/functions';
-import { searchConversationsByDate, fetchIntercomData } from '@/lib/intercom';
+import { searchConversationsByDate, fetchIntercomData, cestDateToUnixRange } from '@/lib/intercom';
 import { getExistingIntercomIds, dbInsertConversation } from '@/lib/db';
+import { supabase } from '@/lib/supabase';
+
+const CHUNK_SIZE = 500;
+
+interface DbRow {
+  id: string;
+  intercom_id: string | null;
+  summary: string | null;
+  original_text: string | null;
+  analyzed_at: string | null;
+}
+
+async function runCleanup(date: string, validIntercomIds: Set<string>) {
+  const [startUnix, endUnix] = cestDateToUnixRange(date);
+  const startISO = new Date(startUnix * 1000).toISOString();
+  const endISO   = new Date(endUnix   * 1000).toISOString();
+
+  const rows: DbRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('id, intercom_id, summary, original_text, analyzed_at')
+      .gte('intercom_created_at', startISO)
+      .lte('intercom_created_at', endISO)
+      .range(from, from + CHUNK_SIZE - 1);
+    if (error) { console.error('[cron] cleanup query:', error.message); return; }
+    rows.push(...(data ?? []));
+    if ((data ?? []).length < CHUNK_SIZE) break;
+    from += CHUNK_SIZE;
+  }
+
+  const byId = new Map<string, DbRow[]>();
+  for (const row of rows) {
+    if (!row.intercom_id) continue;
+    if (!byId.has(row.intercom_id)) byId.set(row.intercom_id, []);
+    byId.get(row.intercom_id)!.push(row);
+  }
+
+  const toDelete: string[] = [];
+  for (const [intercomId, dupes] of byId) {
+    if (!validIntercomIds.has(intercomId)) {
+      toDelete.push(...dupes.map((r) => r.id));
+    } else if (dupes.length > 1) {
+      const best = [...dupes].sort((a, b) => {
+        const aScore = (a.summary ? 2 : 0) + (a.original_text ? 1 : 0);
+        const bScore = (b.summary ? 2 : 0) + (b.original_text ? 1 : 0);
+        if (aScore !== bScore) return bScore - aScore;
+        return new Date(b.analyzed_at ?? 0).getTime() - new Date(a.analyzed_at ?? 0).getTime();
+      })[0];
+      toDelete.push(...dupes.filter((r) => r.id !== best.id).map((r) => r.id));
+    }
+  }
+
+  if (toDelete.length === 0) return;
+  for (let i = 0; i < toDelete.length; i += CHUNK_SIZE) {
+    const chunk = toDelete.slice(i, i + CHUNK_SIZE);
+    await supabase.from('analysis_runs').delete().in('conversation_id', chunk);
+    await supabase.from('conversations').delete().in('id', chunk);
+  }
+  console.log(`[cron] cleanup ${date}: removed ${toDelete.length} non-chat/duplicate rows`);
+}
 import { generateId } from '@/lib/utils';
 import type { Conversation } from '@/lib/types';
 
@@ -30,11 +92,13 @@ async function runCollection(date: string, apiKey: string) {
   let errors = 0;
   const errorSamples: string[] = [];
   const startedAt = Date.now();
+  let validIds = new Set<string>();
 
   try {
     // Step 1: search Intercom for all conversation IDs on this date
     const searchResults = await searchConversationsByDate(date, apiKey);
     const allIds = searchResults.map((r) => r.intercom_id);
+    validIds = new Set<string>(allIds);
 
     if (allIds.length === 0) {
       console.log(`[cron] collect-daily ${date}: no conversations found`);
@@ -149,6 +213,9 @@ async function runCollection(date: string, apiKey: string) {
     console.error(`[cron] collect-daily ${date} fatal error:`, (e as Error).message);
     return;
   }
+
+  // Step 4: cleanup non-chat and duplicate rows using the same valid IDs from Intercom
+  await runCleanup(date, validIds);
 
   const duration = Math.round((Date.now() - startedAt) / 1000);
   console.log(
