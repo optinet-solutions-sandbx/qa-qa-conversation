@@ -7,6 +7,7 @@ import { useToast } from '@/components/layout/ToastProvider';
 import { useConfirm } from '@/components/layout/ConfirmProvider';
 import { dbDeleteConversation } from '@/lib/db-client';
 import type { Conversation } from '@/lib/types';
+import type { ConversationFilters } from '@/lib/db';
 import ConversationCard from './ConversationCard';
 import BulkAnalysisModal from './BulkAnalysisModal';
 
@@ -44,6 +45,14 @@ function IconChevronRight() {
   );
 }
 
+function FilterTag({ label }: { label: string }) {
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+      {label}
+    </span>
+  );
+}
+
 function getPageNumbers(current: number, totalPages: number): (number | '...')[] {
   if (totalPages <= 7) return Array.from({ length: totalPages }, (_, i) => i);
   const pages: (number | '...')[] = [];
@@ -58,7 +67,7 @@ function getPageNumbers(current: number, totalPages: number): (number | '...')[]
   return pages;
 }
 
-export default function ConversationList() {
+export default function ConversationList({ filters }: { filters?: ConversationFilters }) {
   const { deleteConversation } = useStore();
   const storeConvCount = useStore((s) => s.conversations.length);
   const { toast } = useToast();
@@ -78,7 +87,18 @@ export default function ConversationList() {
     setLoading(true);
     setSelected(new Set());
     try {
-      const res = await fetch(`/api/conversations?page=${p}&perPage=${PER_PAGE}`);
+      const params = new URLSearchParams({ page: String(p), perPage: String(PER_PAGE) });
+      if (filters?.resolution_status)        params.set('resolution_status',        filters.resolution_status);
+      if (filters?.dissatisfaction_severity) params.set('dissatisfaction_severity', filters.dissatisfaction_severity);
+      if (filters?.issue_category)           params.set('issue_category',           filters.issue_category);
+      if (filters?.language)                 params.set('language',                 filters.language);
+      if (filters?.brand)                    params.set('brand',                    filters.brand);
+      if (filters?.agent_name)               params.set('agent_name',               filters.agent_name);
+      if (filters?.dateFrom)                 params.set('dateFrom',                 filters.dateFrom);
+      if (filters?.dateTo)                   params.set('dateTo',                   filters.dateTo);
+      if (filters?.analyzed !== undefined)   params.set('analyzed',                 String(filters.analyzed));
+      if (filters?.alert_worthy)             params.set('alert_worthy',             'true');
+      const res = await fetch(`/api/conversations?${params}`);
       if (!res.ok) throw new Error('Failed to load conversations');
       const data = await res.json();
       setConversations(data.conversations);
@@ -87,7 +107,7 @@ export default function ConversationList() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [filters]);
 
   useEffect(() => { fetchPage(0); }, [fetchPage]);
 
@@ -231,6 +251,31 @@ export default function ConversationList() {
           </>
         )}
       </div>
+
+      {/* Active filter banner */}
+      {filters && Object.keys(filters).length > 0 && (
+        <div className="flex items-center gap-2 px-4 sm:px-6 py-2 bg-blue-50 border-b border-blue-100 flex-shrink-0 flex-wrap">
+          <span className="text-xs font-medium text-blue-700">Filtered by:</span>
+          {filters.resolution_status        && <FilterTag label={`Resolution: ${filters.resolution_status}`} />}
+          {filters.dissatisfaction_severity && <FilterTag label={`Severity: ${filters.dissatisfaction_severity}`} />}
+          {filters.issue_category           && <FilterTag label={`Category: ${filters.issue_category}`} />}
+          {filters.language                 && <FilterTag label={`Language: ${filters.language}`} />}
+          {filters.brand                    && <FilterTag label={`Brand: ${filters.brand}`} />}
+          {filters.agent_name               && <FilterTag label={`Agent: ${filters.agent_name}`} />}
+          {(filters.dateFrom || filters.dateTo) && (
+            <FilterTag label={`Date: ${filters.dateFrom ?? ''}${filters.dateFrom && filters.dateTo ? ' – ' : ''}${filters.dateTo ?? ''}`} />
+          )}
+          {filters.analyzed === true  && <FilterTag label="Analyzed" />}
+          {filters.analyzed === false && <FilterTag label="Unanalyzed" />}
+          {filters.alert_worthy       && <FilterTag label="Alert-worthy" />}
+          <button
+            onClick={() => router.push('/')}
+            className="ml-auto text-xs text-blue-500 hover:text-blue-700 underline"
+          >
+            Clear filter
+          </button>
+        </div>
+      )}
 
       {/* Grid */}
       <div className="flex-1 overflow-y-auto p-4 sm:p-6">

@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend,
@@ -61,9 +62,12 @@ function shortDate(iso: string) {
 
 // ── Stat card ──────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, sub, color }: { label: string; value: string | number; sub?: string; color?: string }) {
+function StatCard({ label, value, sub, color, onClick }: { label: string; value: string | number; sub?: string; color?: string; onClick?: () => void }) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 p-5">
+    <div
+      className={`bg-white rounded-2xl border border-slate-200 p-5 transition-colors ${onClick ? 'cursor-pointer hover:border-blue-300 hover:bg-blue-50/30' : ''}`}
+      onClick={onClick}
+    >
       <p className="text-xs font-medium text-slate-400 uppercase tracking-widest">{label}</p>
       <p className={`text-3xl font-bold mt-1 ${color ?? 'text-slate-800'}`}>{typeof value === 'number' ? fmt(value) : value}</p>
       {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
@@ -107,6 +111,7 @@ function Empty({ message }: { message: string }) {
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
+  const router = useRouter();
   const [data, setData]       = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
@@ -116,6 +121,22 @@ export default function DashboardPage() {
   const [dateTo, setDateTo]     = useState('');
   const [brand, setBrand]       = useState('');
   const [agent, setAgent]       = useState('');
+
+  // Track hovered bar/slice so click handlers can read it reliably
+  const hoveredCategory  = useRef<string | null>(null);
+  const hoveredSeverity  = useRef<string | null>(null);
+  const hoveredLanguage  = useRef<string | null>(null);
+  const hoveredResolution = useRef<string | null>(null);
+
+  const navToConversations = useCallback((extra: Record<string, string>) => {
+    const p = new URLSearchParams();
+    if (dateFrom) p.set('dateFrom', dateFrom);
+    if (dateTo)   p.set('dateTo',   dateTo);
+    if (brand)    p.set('brand',    brand);
+    if (agent)    p.set('agent_name', agent);
+    Object.entries(extra).forEach(([k, v]) => { if (v) p.set(k, v); });
+    router.push(`/?${p}`);
+  }, [router, dateFrom, dateTo, brand, agent]);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -231,23 +252,30 @@ export default function DashboardPage() {
         <>
           {/* Stat cards */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <StatCard label="Total Conversations" value={data.overview.total} />
+            <StatCard
+              label="Total Conversations"
+              value={data.overview.total}
+              onClick={() => navToConversations({})}
+            />
             <StatCard
               label="Analyzed"
               value={data.overview.analyzed}
               sub={`${data.overview.analyzedPct}% of total`}
               color="text-blue-600"
+              onClick={() => navToConversations({ analyzed: 'true' })}
             />
             <StatCard
               label="Unanalyzed"
               value={data.overview.unanalyzed}
               color="text-amber-500"
+              onClick={() => navToConversations({ analyzed: 'false' })}
             />
             <StatCard
               label="Alert-worthy"
               value={data.overview.alertWorthy}
               sub="Needs immediate action"
               color="text-red-500"
+              onClick={() => navToConversations({ alert_worthy: 'true' })}
             />
           </div>
 
@@ -261,12 +289,31 @@ export default function DashboardPage() {
                   <Empty message="No date data available" />
                 ) : (
                   <ResponsiveContainer width="100%" height={220}>
-                    <LineChart data={data.conversationsByDate} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                    <LineChart
+                      data={data.conversationsByDate}
+                      margin={{ top: 4, right: 8, left: -20, bottom: 0 }}
+                    >
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                       <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 11, fill: '#94a3b8' }} interval="preserveStartEnd" />
                       <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
                       <Tooltip content={<ChartTooltip />} />
-                      <Line type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} dot={false} name="Conversations" />
+                      <Line
+                        type="monotone"
+                        dataKey="count"
+                        stroke="#3b82f6"
+                        strokeWidth={2}
+                        dot={false}
+                        name="Conversations"
+                        activeDot={{
+                          r: 6,
+                          cursor: 'pointer',
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          onClick: (_: any, payload: any) => {
+                            const date = payload?.payload?.date;
+                            if (date) navToConversations({ dateFrom: date, dateTo: date });
+                          },
+                        }}
+                      />
                     </LineChart>
                   </ResponsiveContainer>
                 )}
@@ -280,8 +327,24 @@ export default function DashboardPage() {
               ) : (
                 <>
                   <ResponsiveContainer width="100%" height={160}>
-                    <PieChart>
-                      <Pie data={data.resolutionBreakdown} dataKey="count" nameKey="label" cx="50%" cy="50%" innerRadius={45} outerRadius={70}>
+                    <PieChart
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => {
+                        if (hoveredResolution.current) navToConversations({ resolution_status: hoveredResolution.current });
+                      }}
+                    >
+                      <Pie
+                        data={data.resolutionBreakdown}
+                        dataKey="count"
+                        nameKey="label"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={45}
+                        outerRadius={70}
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        onMouseEnter={(d: any) => { hoveredResolution.current = d?.label ?? null; }}
+                        onMouseLeave={() => { hoveredResolution.current = null; }}
+                      >
                         {data.resolutionBreakdown.map((entry, i) => (
                           <Cell key={i} fill={RESOLUTION_COLORS[entry.label] ?? COLORS[i % COLORS.length]} />
                         ))}
@@ -291,7 +354,11 @@ export default function DashboardPage() {
                   </ResponsiveContainer>
                   <div className="space-y-1.5 mt-2">
                     {data.resolutionBreakdown.map((r, i) => (
-                      <div key={i} className="flex items-center justify-between text-xs">
+                      <div
+                        key={i}
+                        className="flex items-center justify-between text-xs cursor-pointer hover:bg-slate-50 rounded px-1 -mx-1 transition-colors"
+                        onClick={() => navToConversations({ resolution_status: r.label })}
+                      >
                         <div className="flex items-center gap-1.5">
                           <div className="w-2.5 h-2.5 rounded-full" style={{ background: RESOLUTION_COLORS[r.label] ?? COLORS[i % COLORS.length] }} />
                           <span className="text-slate-600">{r.label}</span>
@@ -315,12 +382,28 @@ export default function DashboardPage() {
                   <Empty message="No analyzed data yet" />
                 ) : (
                   <ResponsiveContainer width="100%" height={Math.max(220, data.topCategories.length * 36)}>
-                    <BarChart data={data.topCategories} layout="vertical" margin={{ top: 0, right: 16, left: 8, bottom: 0 }}>
+                    <BarChart
+                      data={data.topCategories}
+                      layout="vertical"
+                      margin={{ top: 0, right: 16, left: 8, bottom: 0 }}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => {
+                        if (hoveredCategory.current) navToConversations({ issue_category: hoveredCategory.current });
+                      }}
+                    >
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                       <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                       <YAxis type="category" dataKey="label" width={180} tick={{ fontSize: 11, fill: '#475569' }} />
                       <Tooltip content={<ChartTooltip />} />
-                      <Bar dataKey="count" fill="#3b82f6" radius={[0, 4, 4, 0]} name="Conversations" />
+                      <Bar
+                        dataKey="count"
+                        fill="#3b82f6"
+                        radius={[0, 4, 4, 0]}
+                        name="Conversations"
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        onMouseEnter={(d: any) => { hoveredCategory.current = d?.label ?? null; }}
+                        onMouseLeave={() => { hoveredCategory.current = null; }}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 )}
@@ -334,12 +417,26 @@ export default function DashboardPage() {
               ) : (
                 <>
                   <ResponsiveContainer width="100%" height={160}>
-                    <BarChart data={data.severityBreakdown} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                    <BarChart
+                      data={data.severityBreakdown}
+                      margin={{ top: 4, right: 8, left: -20, bottom: 0 }}
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => {
+                        if (hoveredSeverity.current) navToConversations({ dissatisfaction_severity: hoveredSeverity.current });
+                      }}
+                    >
                       <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                       <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                       <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
                       <Tooltip content={<ChartTooltip />} />
-                      <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Count">
+                      <Bar
+                        dataKey="count"
+                        radius={[4, 4, 0, 0]}
+                        name="Count"
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        onMouseEnter={(d: any) => { hoveredSeverity.current = d?.label ?? null; }}
+                        onMouseLeave={() => { hoveredSeverity.current = null; }}
+                      >
                         {data.severityBreakdown.map((entry, i) => (
                           <Cell key={i} fill={SEVERITY_COLORS[entry.label] ?? COLORS[i % COLORS.length]} />
                         ))}
@@ -348,7 +445,11 @@ export default function DashboardPage() {
                   </ResponsiveContainer>
                   <div className="space-y-1.5 mt-2">
                     {data.severityBreakdown.map((s, i) => (
-                      <div key={i} className="flex items-center justify-between text-xs">
+                      <div
+                        key={i}
+                        className="flex items-center justify-between text-xs cursor-pointer hover:bg-slate-50 rounded px-1 -mx-1 transition-colors"
+                        onClick={() => navToConversations({ dissatisfaction_severity: s.label })}
+                      >
                         <div className="flex items-center gap-1.5">
                           <div className="w-2.5 h-2.5 rounded-full" style={{ background: SEVERITY_COLORS[s.label] ?? COLORS[i % COLORS.length] }} />
                           <span className="text-slate-600">{s.label}</span>
@@ -371,12 +472,26 @@ export default function DashboardPage() {
                 <Empty message="No analyzed data yet" />
               ) : (
                 <ResponsiveContainer width="100%" height={220}>
-                  <BarChart data={data.languageBreakdown} margin={{ top: 4, right: 8, left: -20, bottom: 0 }}>
+                  <BarChart
+                    data={data.languageBreakdown}
+                    margin={{ top: 4, right: 8, left: -20, bottom: 0 }}
+                    style={{ cursor: 'pointer' }}
+                    onClick={() => {
+                      if (hoveredLanguage.current) navToConversations({ language: hoveredLanguage.current });
+                    }}
+                  >
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                     <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
                     <Tooltip content={<ChartTooltip />} />
-                    <Bar dataKey="count" radius={[4, 4, 0, 0]} name="Conversations">
+                    <Bar
+                      dataKey="count"
+                      radius={[4, 4, 0, 0]}
+                      name="Conversations"
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      onMouseEnter={(d: any) => { hoveredLanguage.current = d?.label ?? null; }}
+                      onMouseLeave={() => { hoveredLanguage.current = null; }}
+                    >
                       {data.languageBreakdown.map((_, i) => (
                         <Cell key={i} fill={COLORS[i % COLORS.length]} />
                       ))}
@@ -403,7 +518,11 @@ export default function DashboardPage() {
                       </thead>
                       <tbody className="divide-y divide-slate-50">
                         {data.topItems.map((item, i) => (
-                          <tr key={i} className="hover:bg-slate-50 transition-colors">
+                          <tr
+                            key={i}
+                            className="hover:bg-slate-50 transition-colors cursor-pointer"
+                            onClick={() => navToConversations({ issue_category: item.category })}
+                          >
                             <td className="py-2.5 pr-4 text-slate-700 text-xs">{item.label}</td>
                             <td className="py-2.5 pr-4 text-slate-400 text-xs">{item.category}</td>
                             <td className="py-2.5 text-right">
@@ -431,9 +550,13 @@ export default function DashboardPage() {
                   {data.brandBreakdown.map((b, i) => {
                     const pct = data.overview.analyzed > 0 ? Math.round((b.count / data.overview.analyzed) * 100) : 0;
                     return (
-                      <div key={i}>
+                      <div
+                        key={i}
+                        className="cursor-pointer group"
+                        onClick={() => navToConversations({ brand: b.label })}
+                      >
                         <div className="flex items-center justify-between text-xs mb-1">
-                          <span className="text-slate-600 font-medium truncate max-w-[60%]">{b.label}</span>
+                          <span className="text-slate-600 font-medium truncate max-w-[60%] group-hover:text-blue-600 transition-colors">{b.label}</span>
                           <span className="text-slate-400">{fmt(b.count)} <span className="text-slate-300">({pct}%)</span></span>
                         </div>
                         <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
@@ -461,7 +584,11 @@ export default function DashboardPage() {
                     </thead>
                     <tbody className="divide-y divide-slate-50">
                       {data.agentBreakdown.map((a, i) => (
-                        <tr key={i} className="hover:bg-slate-50 transition-colors">
+                        <tr
+                          key={i}
+                          className="hover:bg-slate-50 transition-colors cursor-pointer"
+                          onClick={() => navToConversations({ agent_name: a.label })}
+                        >
                           <td className="py-2.5 pr-4 text-slate-700 text-xs font-medium">{a.label}</td>
                           <td className="py-2.5 text-right">
                             <span className="text-xs font-semibold text-slate-600">{fmt(a.count)}</span>

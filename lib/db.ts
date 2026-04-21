@@ -383,21 +383,173 @@ export async function getConversationById(id: string): Promise<Conversation | nu
   return mapConversationRow(data);
 }
 
+export interface ConversationFilters {
+  resolution_status?: string;
+  dissatisfaction_severity?: string;
+  issue_category?: string;
+  language?: string;
+  brand?: string;
+  agent_name?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  analyzed?: boolean;
+  alert_worthy?: boolean;
+}
+
+export function needsJsonFilter(filters: ConversationFilters): boolean {
+  return !!(filters.resolution_status || filters.dissatisfaction_severity ||
+            filters.issue_category    || filters.language);
+}
+
 export async function loadConversations(
   page = 0,
   perPage = 24,
+  filters: ConversationFilters = {},
 ): Promise<{ conversations: Conversation[]; total: number }> {
   const from = page * perPage;
   const to = from + perPage - 1;
-  const { data, error, count } = await supabase
+  let query = supabase
     .from('conversations')
     .select('*', { count: 'exact' })
     .order('analyzed_at', { ascending: false })
     .range(from, to);
+
+  if (filters.brand)                 query = query.eq('brand', filters.brand);
+  if (filters.agent_name)            query = query.eq('agent_name', filters.agent_name);
+  if (filters.dateFrom)              query = query.gte('intercom_created_at', new Date(filters.dateFrom).toISOString());
+  if (filters.dateTo) {
+    const end = new Date(filters.dateTo);
+    end.setDate(end.getDate() + 1);
+    query = query.lt('intercom_created_at', end.toISOString());
+  }
+  if (filters.analyzed === true)     query = query.not('summary', 'is', null);
+  if (filters.analyzed === false)    query = query.is('summary', null);
+  if (filters.alert_worthy === true) query = query.eq('is_alert_worthy', true);
+
+  const { data, error, count } = await query;
   if (error) throw new Error(`[db] loadConversations: ${error.message}`);
   return {
     conversations: (data ?? []).map((c) => mapConversationRow(c)),
     total: count ?? 0,
+  };
+}
+
+// Strips markdown code fences that LLMs sometimes wrap JSON in.
+function stripSummaryFences(text: string): string {
+  return text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '').trim();
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function parseSummary(raw: string | null): Record<string, any> | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(stripSummaryFences(raw));
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch { return null; }
+}
+
+// Builds a Supabase query with only the DB-level filters (brand, agent, dates, alert_worthy).
+// Returns a fresh builder each call — safe to chain .range() onto.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildJsonFilterBaseQuery(fields: string, filters: ConversationFilters): any {
+  let q = supabase
+    .from('conversations')
+    .select(fields)
+    .not('summary', 'is', null)
+    .order('analyzed_at', { ascending: false });
+
+  if (filters.brand)                 q = q.eq('brand', filters.brand);
+  if (filters.agent_name)            q = q.eq('agent_name', filters.agent_name);
+  if (filters.dateFrom)              q = q.gte('intercom_created_at', new Date(filters.dateFrom).toISOString());
+  if (filters.dateTo) {
+    const end = new Date(filters.dateTo);
+    end.setDate(end.getDate() + 1);
+    q = q.lt('intercom_created_at', end.toISOString());
+  }
+  if (filters.alert_worthy === true) q = q.eq('is_alert_worthy', true);
+  return q;
+}
+
+// Used when filters include fields stored only inside the summary JSON
+// (resolution_status, dissatisfaction_severity, language, issue_category).
+// Step 1: fetch id + summary for all matching rows, filter in JS (mirrors dashboard).
+// Step 2: fetch full rows only for the current page of matched IDs.
+export async function loadConversationsWithJsonFilter(
+  page = 0,
+  perPage = 24,
+  filters: ConversationFilters = {},
+): Promise<{ conversations: Conversation[]; total: number }> {
+  const DB_PAGE = 1000;
+
+  // ── Step 1: fetch only id + summary (lightweight) ──────────────────────
+  type Slim = { id: string; summary: string | null };
+  const allSlim: Slim[] = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await buildJsonFilterBaseQuery('id, summary', filters)
+      .range(offset, offset + DB_PAGE - 1);
+    if (error) throw new Error(`[db] loadConversationsWithJsonFilter (slim): ${error.message}`);
+    if (!data || data.length === 0) break;
+    allSlim.push(...(data as Slim[]));
+    if (data.length < DB_PAGE) break;
+    offset += DB_PAGE;
+  }
+
+  // ── Step 2: apply JSON filters in memory ────────────────────────────────
+  let filtered = allSlim;
+
+  if (filters.resolution_status) {
+    const v = filters.resolution_status.toLowerCase();
+    filtered = filtered.filter((r) => {
+      const json = parseSummary(r.summary);
+      return (json?.resolution_status as string | null)?.toLowerCase() === v;
+    });
+  }
+
+  if (filters.dissatisfaction_severity) {
+    const v = filters.dissatisfaction_severity.toLowerCase();
+    filtered = filtered.filter((r) => {
+      const json = parseSummary(r.summary);
+      return (json?.dissatisfaction_severity as string | null)?.toLowerCase() === v;
+    });
+  }
+
+  if (filters.language) {
+    const v = filters.language.toLowerCase();
+    filtered = filtered.filter((r) => {
+      const json = parseSummary(r.summary);
+      return (json?.language as string | null)?.toLowerCase() === v;
+    });
+  }
+
+  if (filters.issue_category) {
+    const v = filters.issue_category.toLowerCase();
+    filtered = filtered.filter((r) => {
+      const json = parseSummary(r.summary);
+      const results = Array.isArray(json?.results) ? json.results : [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      return results.some((x: any) => (x.category ?? '').toLowerCase() === v);
+    });
+  }
+
+  const total = filtered.length;
+  const pageIds = filtered
+    .slice(page * perPage, (page + 1) * perPage)
+    .map((r) => r.id);
+
+  if (pageIds.length === 0) return { conversations: [], total };
+
+  // ── Step 3: fetch full rows only for the current page ───────────────────
+  const { data: fullRows, error: fullError } = await supabase
+    .from('conversations')
+    .select('*')
+    .in('id', pageIds)
+    .order('analyzed_at', { ascending: false });
+
+  if (fullError) throw new Error(`[db] loadConversationsWithJsonFilter (full): ${fullError.message}`);
+  return {
+    conversations: (fullRows ?? []).map((c) => mapConversationRow(c)),
+    total,
   };
 }
 
