@@ -290,10 +290,11 @@ export default function ConversationList({ filters }: { filters?: ConversationFi
                 <ConversationCard
                   key={conv.id}
                   conversation={conv}
+                  href={`/conversations/${conv.id}`}
                   selectMode={selectMode}
                   selected={selected.has(conv.id)}
                   onToggleSelect={() => toggleSelect(conv.id)}
-                  onClick={() => !selectMode && router.push(`/conversations/${conv.id}`)}
+                  onClick={() => router.push(`/conversations/${conv.id}`)}
                   onDelete={(e) => handleDeleteOne(conv.id, e)}
                 />
               ))}

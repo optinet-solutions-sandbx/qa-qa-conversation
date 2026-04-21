@@ -5,6 +5,7 @@ import { fmtTime } from '@/lib/utils';
 
 interface Props {
   conversation: Conversation;
+  href: string;
   selectMode: boolean;
   selected: boolean;
   onToggleSelect: () => void;
@@ -72,18 +73,22 @@ function RatingScore({ score }: { score: number }) {
   );
 }
 
-export default function ConversationCard({ conversation: c, selectMode, selected, onToggleSelect, onClick, onDelete }: Props) {
-  const handleClick = () => {
-    if (selectMode) onToggleSelect();
-    else onClick();
+export default function ConversationCard({ conversation: c, href, selectMode, selected, onToggleSelect, onClick, onDelete }: Props) {
+  const handleClick = (e: React.MouseEvent) => {
+    if (selectMode) { e.preventDefault(); onToggleSelect(); return; }
+    // Middle-click or Ctrl/Cmd+click → let the <a> open a new tab natively
+    if (e.button === 1 || e.ctrlKey || e.metaKey) return;
+    e.preventDefault();
+    onClick();
   };
 
   const isAnalyzed = !!(c.dissatisfaction_severity || c.resolution_status || c.is_alert_worthy);
 
   return (
-    <div
+    <a
+      href={href}
       className={[
-        'relative group bg-white rounded-xl border cursor-pointer transition-all duration-150',
+        'relative group bg-white rounded-xl border cursor-pointer transition-all duration-150 block',
         accentClass(c),
         selected
           ? 'border-blue-400 ring-2 ring-blue-100 shadow-sm'
@@ -186,6 +191,6 @@ export default function ConversationCard({ conversation: c, selectMode, selected
           )}
         </div>
       </div>
-    </div>
+    </a>
   );
 }

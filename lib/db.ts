@@ -412,7 +412,7 @@ export async function loadConversations(
   let query = supabase
     .from('conversations')
     .select('*', { count: 'exact' })
-    .order('analyzed_at', { ascending: false })
+    .order('intercom_created_at', { ascending: false })
     .range(from, to);
 
   if (filters.brand) {
@@ -463,7 +463,7 @@ function buildJsonFilterBaseQuery(fields: string, filters: ConversationFilters):
     .from('conversations')
     .select(fields)
     .not('summary', 'is', null)
-    .order('analyzed_at', { ascending: false });
+    .order('intercom_created_at', { ascending: false });
 
   if (filters.brand) {
     if (filters.brand.toLowerCase() === 'unknown') q = q.is('brand', null);
@@ -595,7 +595,7 @@ export async function loadConversationsWithJsonFilter(
     .from('conversations')
     .select('*')
     .in('id', pageIds)
-    .order('analyzed_at', { ascending: false });
+    .order('intercom_created_at', { ascending: false });
 
   if (fullError) throw new Error(`[db] loadConversationsWithJsonFilter (full): ${fullError.message}`);
   return {
