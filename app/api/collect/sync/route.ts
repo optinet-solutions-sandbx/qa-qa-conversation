@@ -51,7 +51,6 @@ export async function POST(req: NextRequest) {
     action: 'start' | 'batch' | 'reconcile' | 'complete' | 'cancel' | 'error';
     date: string;
     ids?: string[];
-    intercomIds?: string[];
     message?: string;
   };
 
@@ -134,15 +133,19 @@ export async function POST(req: NextRequest) {
   }
 
   // ── reconcile ──────────────────────────────────────────────────────────
-  // Called after all batches finish. Removes any DB row for this date whose
-  // intercom_id is not in the canonical Intercom set, and de-duplicates rows
-  // that share the same intercom_id. This keeps DB counts in sync with Intercom.
+  // Called after all batches finish. Re-queries Intercom for the canonical
+  // ID list and deletes any DB row that is no longer in it (stale, non-chat,
+  // or duplicate). Fetching from Intercom server-side is authoritative and
+  // avoids passing a large ID list over the wire from the client.
   if (action === 'reconcile') {
-    const intercomIds = body.intercomIds ?? [];
     try {
-      const deleted = await dbReconcileConversations(date, new Set(intercomIds));
-      return NextResponse.json({ ok: true, deleted });
+      const searchResults = await searchConversationsByDate(date, apiKey);
+      const validIds = new Set(searchResults.map((r) => r.intercom_id));
+      const deleted = await dbReconcileConversations(date, validIds);
+      console.log(`[sync] reconcile ${date}: ${searchResults.length} valid, ${deleted} deleted`);
+      return NextResponse.json({ ok: true, deleted, valid: searchResults.length });
     } catch (e) {
+      console.error(`[sync] reconcile ${date} failed:`, (e as Error).message);
       return NextResponse.json({ error: (e as Error).message }, { status: 500 });
     }
   }
