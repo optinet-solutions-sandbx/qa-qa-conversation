@@ -8,6 +8,7 @@ import {
   dbGetSyncJob,
   dbUpsertSyncJob,
   dbUpdateSyncJob,
+  dbReconcileConversations,
 } from '@/lib/db';
 import { generateId } from '@/lib/utils';
 import type { Conversation, ConversationFetchResult, SyncJob } from '@/lib/types';
@@ -47,9 +48,10 @@ export async function POST(req: NextRequest) {
   if (!apiKey) return NextResponse.json({ error: 'INTERCOM_API_KEY not configured' }, { status: 500 });
 
   let body: {
-    action: 'start' | 'batch' | 'complete' | 'cancel' | 'error';
+    action: 'start' | 'batch' | 'reconcile' | 'complete' | 'cancel' | 'error';
     date: string;
     ids?: string[];
+    intercomIds?: string[];
     message?: string;
   };
 
@@ -129,6 +131,20 @@ export async function POST(req: NextRequest) {
     } catch { /* non-fatal */ }
 
     return NextResponse.json({ results });
+  }
+
+  // ── reconcile ──────────────────────────────────────────────────────────
+  // Called after all batches finish. Removes any DB row for this date whose
+  // intercom_id is not in the canonical Intercom set, and de-duplicates rows
+  // that share the same intercom_id. This keeps DB counts in sync with Intercom.
+  if (action === 'reconcile') {
+    const intercomIds = body.intercomIds ?? [];
+    try {
+      const deleted = await dbReconcileConversations(date, new Set(intercomIds));
+      return NextResponse.json({ ok: true, deleted });
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: 500 });
+    }
   }
 
   // ── complete ───────────────────────────────────────────────────────────
@@ -213,6 +229,7 @@ function buildConversation(data: ConversationFetchResult): Conversation {
     median_time_to_reply: data.median_time_to_reply,
     count_reopens: data.count_reopens,
     original_text: data.transcript,
+    raw_messages: data.raw_messages,
     notes: [],
     sentiment: null,
     summary: null,

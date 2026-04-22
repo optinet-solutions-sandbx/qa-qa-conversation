@@ -60,6 +60,7 @@ function mapConversationRow(c: Record<string, any>, notes: ConversationNote[] = 
     is_alert_worthy: c.is_alert_worthy ?? false,
     alert_reason: c.alert_reason ?? null,
     original_text: c.original_text ?? null,
+    raw_messages: c.raw_messages ?? null,
     last_prompt_id: c.last_prompt_id ?? null,
     last_prompt_content: c.last_prompt_content ?? null,
     notes,
@@ -133,6 +134,7 @@ function conversationRow(c: Conversation) {
     alert_reason: c.alert_reason,
 
     original_text: c.original_text,
+    raw_messages: c.raw_messages ?? null,
     last_prompt_id: c.last_prompt_id,
     last_prompt_content: c.last_prompt_content,
   };
@@ -191,6 +193,7 @@ export async function dbUpdateConversationByIntercomId(c: Conversation): Promise
     median_time_to_reply: c.median_time_to_reply != null ? Math.round(c.median_time_to_reply) : null,
     count_reopens: c.count_reopens != null ? Math.round(c.count_reopens) : null,
     original_text: c.original_text,
+    raw_messages: c.raw_messages ?? null,
   }).eq('intercom_id', c.intercom_id);
   if (error) throw new Error(`[db] update conversation by intercom_id: ${error.message}`);
 }
@@ -866,6 +869,68 @@ export async function dbUpsertSyncJob(job: SyncJob): Promise<void> {
 export async function dbUpdateSyncJob(date: string, patch: Partial<SyncJob>): Promise<void> {
   const { error } = await supabase.from('sync_jobs').update(patch).eq('id', date);
   if (error) throw new Error(`[db] update sync job: ${error.message}`);
+}
+
+// Reconciles DB conversations for a date against the canonical Intercom set.
+// Deletes rows whose intercom_id is not in validIntercomIds (stale/non-chat),
+// and deduplicates rows sharing the same intercom_id (keeps the richest one).
+// Returns the number of rows deleted.
+export async function dbReconcileConversations(
+  date: string,
+  validIntercomIds: Set<string>,
+): Promise<number> {
+  const [startUnix, endUnix] = cestDateToUnixRange(date);
+  const startISO = new Date(startUnix * 1000).toISOString();
+  const endISO   = new Date(endUnix   * 1000).toISOString();
+
+  const CHUNK = 500;
+  type SlimRow = { id: string; intercom_id: string | null; summary: string | null; original_text: string | null; analyzed_at: string | null };
+  const rows: SlimRow[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('id, intercom_id, summary, original_text, analyzed_at')
+      .gte('intercom_created_at', startISO)
+      .lte('intercom_created_at', endISO)
+      .range(from, from + CHUNK - 1);
+    if (error) throw new Error(`[db] reconcile fetch: ${error.message}`);
+    rows.push(...(data ?? []));
+    if ((data ?? []).length < CHUNK) break;
+    from += CHUNK;
+  }
+
+  const byId = new Map<string, SlimRow[]>();
+  for (const row of rows) {
+    if (!row.intercom_id) continue;
+    if (!byId.has(row.intercom_id)) byId.set(row.intercom_id, []);
+    byId.get(row.intercom_id)!.push(row);
+  }
+
+  const toDelete: string[] = [];
+  for (const [intercomId, group] of byId) {
+    if (!validIntercomIds.has(intercomId)) {
+      toDelete.push(...group.map((r) => r.id));
+    } else if (group.length > 1) {
+      const best = [...group].sort((a, b) => {
+        const score = (r: SlimRow) => (r.summary ? 2 : 0) + (r.original_text ? 1 : 0);
+        if (score(b) !== score(a)) return score(b) - score(a);
+        return new Date(b.analyzed_at ?? 0).getTime() - new Date(a.analyzed_at ?? 0).getTime();
+      })[0];
+      toDelete.push(...group.filter((r) => r.id !== best.id).map((r) => r.id));
+    }
+  }
+
+  if (toDelete.length === 0) return 0;
+
+  for (let i = 0; i < toDelete.length; i += CHUNK) {
+    const chunk = toDelete.slice(i, i + CHUNK);
+    await supabase.from('analysis_runs').delete().in('conversation_id', chunk);
+    const { error } = await supabase.from('conversations').delete().in('id', chunk);
+    if (error) throw new Error(`[db] reconcile delete: ${error.message}`);
+  }
+
+  return toDelete.length;
 }
 
 // ── Ask AI queries ─────────────────────────────────────────────────────────

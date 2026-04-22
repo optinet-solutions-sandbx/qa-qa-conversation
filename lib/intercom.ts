@@ -1,4 +1,4 @@
-import type { ConversationFetchResult, PlayerCompany, PlayerEventSummary } from './types';
+import type { ConversationFetchResult, PlayerCompany, PlayerEventSummary, RawMessage } from './types';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -224,8 +224,12 @@ export async function fetchIntercomData(
   const firstAdminPart = parts.find((p) => p.author.type === 'admin');
   const isBotHandled = conv.teammates?.teammates?.some((t) => t.type === 'bot' || t.type === 'operator') ?? false;
 
-  const transcript = parts
-    .filter((p) => p.part_type === 'comment' && p.body)
+  const commentParts = parts.filter((p) => p.part_type === 'comment' && p.body);
+  const rawMessages: RawMessage[] = commentParts.map((p) => ({
+    author_type: p.author.type ?? 'user',
+    body: stripHtml(p.body),
+  }));
+  const transcript = commentParts
     .map((p) => {
       let label: string;
       if (p.author.type === 'admin') label = 'Agent';
@@ -313,5 +317,6 @@ export async function fetchIntercomData(
     median_time_to_reply: conv.statistics?.median_time_to_reply ?? null,
     count_reopens: conv.statistics?.count_reopens ?? null,
     transcript: truncated,
+    raw_messages: rawMessages,
   };
 }

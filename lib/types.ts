@@ -6,6 +6,11 @@ export interface ConversationNote {
   system: boolean;
 }
 
+export interface RawMessage {
+  author_type: string;
+  body: string;
+}
+
 export interface PlayerCompany {
   id: string;
   name: string;
@@ -98,6 +103,7 @@ export interface Conversation {
 
   // Transcript & notes
   original_text: string | null;
+  raw_messages: RawMessage[] | null;
   notes: ConversationNote[];
 }
 
@@ -164,6 +170,7 @@ export interface ConversationFetchResult {
   count_reopens: number | null;
 
   transcript: string;
+  raw_messages: RawMessage[];
 }
 
 export interface AnalysisRun {

@@ -168,6 +168,7 @@ export default function CollectPage() {
   const [dismissed, setDismissed] = useState(false);
   const cancelledRef = useRef(false);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
+  const allIntercomIdsRef = useRef<string[]>([]);
 
   // ── Load table from DB ──────────────────────────────────────────────────
 
@@ -240,6 +241,25 @@ export default function CollectPage() {
 
   useEffect(() => { loadTable(0, date, search); }, [date, search, loadTable]);
 
+  // ── Reconcile + complete ────────────────────────────────────────────────
+  // After all batches finish, delete any DB rows for this date that are not
+  // in Intercom's canonical result set, then mark the job done.
+  const reconcileAndComplete = useCallback(async (d: string, intercomIds: string[]) => {
+    await fetch('/api/collect/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'reconcile', date: d, intercomIds }),
+    });
+    await fetch('/api/collect/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'complete', date: d }),
+    });
+    setSyncJob((j) => j ? { ...j, status: 'done' } : j);
+    loadTable(0, d, search);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadTable]);
+
   // ── Batch loop (client-driven, survives navigation via resume) ──────────
 
   const runBatchLoop = useCallback(async (pendingIds: string[], d: string) => {
@@ -274,15 +294,7 @@ export default function CollectPage() {
       if (i + BATCH_SIZE < pendingIds.length) await sleep(300);
     }
 
-    if (!cancelledRef.current) {
-      await fetch('/api/collect/sync', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'complete', date: d }),
-      });
-      setSyncJob((j) => j ? { ...j, status: 'done' } : j);
-      loadTable(0, d, search);
-    }
+    // Reconcile + complete is handled by the caller after the loop returns.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadTable]);
 
@@ -302,15 +314,13 @@ export default function CollectPage() {
       const data = await res.json();
       if (!res.ok) { toast(data.error ?? 'Failed to start', 'error'); setSyncJob(null); return; }
 
-      const { ids, existingIds: existing, total: t } = data as { ids: string[]; existingIds: string[]; total: number };
-      const existingSet = new Set<string>(existing);
-      // All IDs — server will update/insert, but skip ones already saved unless forced
-      // We always re-fetch all to keep data fresh
-      const pendingIds = ids;
+      const { ids, total: t } = data as { ids: string[]; existingIds: string[]; total: number };
+      allIntercomIdsRef.current = ids;
 
       setSyncJob((j) => j ? { ...j, total: t } : j);
       startPolling(date);
-      await runBatchLoop(pendingIds, date);
+      await runBatchLoop(ids, date);
+      if (!cancelledRef.current) await reconcileAndComplete(date, ids);
     } catch (e) {
       toast((e as Error).message, 'error');
       setSyncJob(null);
@@ -335,13 +345,14 @@ export default function CollectPage() {
       if (!res.ok) { toast(data.error ?? 'Failed to resume', 'error'); return; }
 
       const { ids, existingIds: existing, total: t } = data as { ids: string[]; existingIds: string[]; total: number };
+      allIntercomIdsRef.current = ids;
       const existingSet = new Set<string>(existing);
-      // Resume: only process IDs that aren't already saved
       const pendingIds = ids.filter((id) => !existingSet.has(id));
 
       setSyncJob((j) => j ? { ...j, status: 'running', total: t, done: t - pendingIds.length } : j);
       startPolling(date);
       await runBatchLoop(pendingIds, date);
+      if (!cancelledRef.current) await reconcileAndComplete(date, ids);
     } catch (e) {
       toast((e as Error).message, 'error');
     }
