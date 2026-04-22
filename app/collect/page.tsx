@@ -168,6 +168,9 @@ export default function CollectPage() {
   const [dismissed, setDismissed] = useState(false);
   const cancelledRef = useRef(false);
   const pollRef = useRef<NodeJS.Timeout | null>(null);
+  // Prevents the background poll from overwriting local 'running' state with
+  // a stale 'done' from the DB while startSync / resumeSync is actively driving batches.
+  const syncActiveRef = useRef(false);
 
   // ── Load table from DB ──────────────────────────────────────────────────
 
@@ -198,7 +201,11 @@ export default function CollectPage() {
       if (!res.ok) return;
       const data = await res.json();
       if (data.status === 'idle') return;
-      setSyncJob(data as SyncJob);
+      setSyncJob((current) => {
+        // Don't let a stale DB 'done' overwrite an active client-driven sync
+        if (syncActiveRef.current && data.status !== 'running') return current;
+        return data as SyncJob;
+      });
     } catch { /* ignore */ }
   }, []);
 
@@ -305,10 +312,10 @@ export default function CollectPage() {
 
   const startSync = async () => {
     setDismissed(false);
+    syncActiveRef.current = true;
     setSyncJob({ id: date, status: 'running', total: 0, done: 0, error_count: 0, started_at: new Date().toISOString(), finished_at: null, error_message: null });
 
     try {
-      // Get all IDs from Intercom; server creates job in DB
       const res = await fetch('/api/collect/sync', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -326,6 +333,8 @@ export default function CollectPage() {
     } catch (e) {
       toast((e as Error).message, 'error');
       setSyncJob(null);
+    } finally {
+      syncActiveRef.current = false;
     }
   };
 
@@ -335,6 +344,7 @@ export default function CollectPage() {
     if (!syncJob) return;
     setDismissed(false);
     cancelledRef.current = false;
+    syncActiveRef.current = true;
 
     try {
       // Re-search Intercom for the date, then find which IDs are NOT yet in DB
@@ -356,6 +366,8 @@ export default function CollectPage() {
       if (!cancelledRef.current) await reconcileAndComplete(date);
     } catch (e) {
       toast((e as Error).message, 'error');
+    } finally {
+      syncActiveRef.current = false;
     }
   };
 
