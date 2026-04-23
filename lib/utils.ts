@@ -56,13 +56,23 @@ export const AM_NAMES = ['Ada', 'Christian', 'Salvatore', 'Esam', 'Koko', 'SoftS
 export type AmName = typeof AM_NAMES[number];
 
 export const AM_GROUP_MAP: Record<string, string[]> = {
-  Ada:       ['group: VIP_Ada',       'group: NON-VIP_Ada'],
-  Christian: ['group: VIP_Christian', 'group: NON-VIP_Christian'],
-  Salvatore: ['group: VIP_Salvatore', 'group: NON-VIP_Salvatore'],
-  Esam:      ['group: VIP_Esam',      'group: NON-VIP_Esam'],
-  Koko:      ['group: VIP_Koko',      'group: NON-VIP_Koko'],
-  SoftSwiss: ['group: SoftSwiss'],
+  Ada:       ['vip_ada',       'non-vip_ada'],
+  Christian: ['vip_christian', 'non-vip_christian'],
+  Salvatore: ['vip_salvatore', 'non-vip_salvatore'],
+  Esam:      ['vip_esam',      'non-vip_esam'],
+  Koko:      ['vip_koko',      'non-vip_koko'],
+  SoftSwiss: ['softswiss'],
 };
+
+// Strips "group: " prefix, emoji / non-ASCII chars (e.g. 🎲), whitespace, and lowercases.
+// Handles Intercom tag formats: "group: VIP_Ada", "group: vip_ada🎲", "group: softswiss dach", etc.
+export function normalizeGroupName(g: string): string {
+  return g
+    .replace(/^group:\s*/i, '')
+    .replace(/[^\x00-\x7F]/g, '')
+    .trim()
+    .toLowerCase();
+}
 
 export function getAmGroupsForFilter(am: string): string[] {
   return AM_GROUP_MAP[am] ?? [];
@@ -86,8 +96,11 @@ export function getSegment(conv: Conversation): 'VIP' | 'NONVIP' | null {
     ...(conv.tags ?? []),
     ...companyNames,
   ];
-  if (allGroups.some((g) => /^group: VIP_/i.test(g))) return 'VIP';
-  if (allGroups.some((g) => /^group: NON-VIP_/i.test(g) || g === 'group: SoftSwiss')) return 'NONVIP';
+  if (allGroups.some((g) => /^vip_/.test(normalizeGroupName(g)))) return 'VIP';
+  if (allGroups.some((g) => {
+    const n = normalizeGroupName(g);
+    return /^non-vip_/.test(n) || n === 'softswiss' || n.startsWith('softswiss ');
+  })) return 'NONVIP';
   return null;
 }
 
@@ -115,8 +128,13 @@ export function getAccountManager(conv: Conversation): string | null {
     ...(conv.tags ?? []),
     ...companyNames,
   ];
+  const normalizedGroups = allGroups.map(normalizeGroupName);
   for (const [am, groups] of Object.entries(AM_GROUP_MAP)) {
-    if (groups.some((g) => allGroups.includes(g))) return am;
+    if (am === 'SoftSwiss') {
+      if (normalizedGroups.some((n) => n === 'softswiss' || n.startsWith('softswiss '))) return am;
+    } else if (groups.some((g) => normalizedGroups.includes(g))) {
+      return am;
+    }
   }
   return null;
 }

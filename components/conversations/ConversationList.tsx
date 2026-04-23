@@ -134,11 +134,11 @@ function FilterTag({ label }: { label: string }) {
 
 function SegmentBadge({ segment }: { segment: 'VIP' | 'NONVIP' }) {
   return segment === 'VIP' ? (
-    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold tracking-wide bg-blue-50 text-blue-600">
+    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold tracking-wide text-yellow-600">
       VIP
     </span>
   ) : (
-    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold tracking-wide bg-amber-50 text-amber-600">
+    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold tracking-wide text-blue-600">
       NONVIP
     </span>
   );

@@ -1,5 +1,5 @@
 import type { ConversationFetchResult, PlayerCompany, PlayerEventSummary, RawMessage } from './types';
-import { AM_GROUP_MAP } from './utils';
+import { AM_GROUP_MAP, normalizeGroupName } from './utils';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -327,8 +327,13 @@ export async function fetchIntercomData(
       }
       const convTags = (conv.tags?.tags ?? []).map((t) => t.name);
       const allGroups = [...playerTags, ...playerSegments, ...convTags, ...playerCompanies.map((c) => c.name)];
+      const normalizedGroups = allGroups.map(normalizeGroupName);
       for (const [am, groups] of Object.entries(AM_GROUP_MAP)) {
-        if (groups.some((g) => allGroups.includes(g))) return am;
+        if (am === 'SoftSwiss') {
+          if (normalizedGroups.some((n) => n === 'softswiss' || n.startsWith('softswiss '))) return am;
+        } else if (groups.some((g) => normalizedGroups.includes(g))) {
+          return am;
+        }
       }
       return null;
     })(),

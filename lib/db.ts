@@ -439,7 +439,13 @@ export async function loadConversations(
     else                                                query = query.eq('agent_name', filters.agent_name);
   }
   if (filters.account_manager) {
-    query = query.eq('account_manager', filters.account_manager);
+    const am = filters.account_manager;
+    const lower = am.toLowerCase();
+    const amTags = lower === 'softswiss'
+      ? ['group: softswiss🎲', 'group: softswiss dach', 'group: softswiss english', 'group: softswiss']
+      : [`group: vip_${lower}🎲`, `group: non-vip_${lower}🎲`];
+    const quotedTags = amTags.map((t) => `"${t}"`).join(',');
+    query = query.or(`account_manager.eq.${am},player_tags.ov.{${quotedTags}}`);
   }
   if (filters.dateFrom)              query = query.gte('intercom_created_at', new Date(filters.dateFrom).toISOString());
   if (filters.dateTo) {
