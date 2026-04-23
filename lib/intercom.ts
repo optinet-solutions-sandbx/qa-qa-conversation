@@ -1,4 +1,5 @@
 import type { ConversationFetchResult, PlayerCompany, PlayerEventSummary, RawMessage } from './types';
+import { AM_GROUP_MAP } from './utils';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -318,5 +319,18 @@ export async function fetchIntercomData(
     count_reopens: conv.statistics?.count_reopens ?? null,
     transcript: truncated,
     raw_messages: rawMessages,
+    account_manager: (() => {
+      const customAttrs = contact?.custom_attributes ?? {};
+      for (const key of ['Account Manager', 'account_manager', 'AccountManager', 'AM', 'Account Mgr']) {
+        const v = customAttrs[key];
+        if (v != null && v !== '') return String(v);
+      }
+      const convTags = (conv.tags?.tags ?? []).map((t) => t.name);
+      const allGroups = [...playerTags, ...playerSegments, ...convTags, ...playerCompanies.map((c) => c.name)];
+      for (const [am, groups] of Object.entries(AM_GROUP_MAP)) {
+        if (groups.some((g) => allGroups.includes(g))) return am;
+      }
+      return null;
+    })(),
   };
 }

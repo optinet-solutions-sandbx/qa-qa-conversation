@@ -39,12 +39,13 @@ function countBy<T>(items: T[], key: (item: T) => string | null): { label: strin
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
-  const dateFrom   = searchParams.get('dateFrom');
-  const dateTo     = searchParams.get('dateTo');
-  const brand      = searchParams.get('brand');
-  const agent      = searchParams.get('agent');
-  const categories = searchParams.getAll('category');
-  const issues     = searchParams.getAll('issue');
+  const dateFrom       = searchParams.get('dateFrom');
+  const dateTo         = searchParams.get('dateTo');
+  const brand          = searchParams.get('brand');
+  const agent          = searchParams.get('agent');
+  const accountManager = searchParams.get('accountManager');
+  const categories     = searchParams.getAll('category');
+  const issues         = searchParams.getAll('issue');
 
   try {
     // ── Build base query filters (dates interpreted in CEST / UTC+2) ────────
@@ -53,10 +54,13 @@ export async function GET(req: NextRequest) {
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const applyFilters = (q: any) => {
-      if (cestFromISO) q = q.gte('intercom_created_at', cestFromISO);
-      if (cestToISO)   q = q.lte('intercom_created_at', cestToISO);
-      if (brand)       q = q.eq('brand', brand);
-      if (agent)       q = q.eq('agent_name', agent);
+      if (cestFromISO)    q = q.gte('intercom_created_at', cestFromISO);
+      if (cestToISO)      q = q.lte('intercom_created_at', cestToISO);
+      if (brand)          q = q.eq('brand', brand);
+      if (agent)          q = q.eq('agent_name', agent);
+      if (accountManager) {
+        q = q.eq('account_manager', accountManager);
+      }
       return q;
     };
 

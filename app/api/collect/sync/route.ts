@@ -247,6 +247,7 @@ function buildConversation(data: ConversationFetchResult): Conversation {
     recommended_action: null,
     is_alert_worthy: false,
     alert_reason: null,
+    account_manager: data.account_manager,
     last_prompt_id: null,
     last_prompt_content: null,
   };

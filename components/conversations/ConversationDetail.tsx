@@ -546,15 +546,48 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
     </div>
   );
 
+  // Build structured messages from raw_messages, falling back to parsing original_text
+  const chatMessages: { author_type: string; body: string }[] = (() => {
+    if (conv.raw_messages && conv.raw_messages.length > 0) return conv.raw_messages;
+    if (!conv.original_text) return [];
+    return conv.original_text.split('\n\n').flatMap((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return [];
+      if (trimmed.startsWith('Agent:'))  return [{ author_type: 'admin', body: trimmed.slice(6).trim() }];
+      if (trimmed.startsWith('Bot:'))    return [{ author_type: 'bot',   body: trimmed.slice(4).trim() }];
+      if (trimmed.startsWith('Player:')) return [{ author_type: 'user',  body: trimmed.slice(7).trim() }];
+      return [{ author_type: 'user', body: trimmed }];
+    });
+  })();
+
   const transcriptContent = (
-    <div className="min-w-0">
-      {conv.original_text ? (
-        <pre className="text-xs text-slate-700 whitespace-pre-wrap font-sans leading-relaxed break-words min-w-0 w-full">
-          {conv.original_text}
-        </pre>
-      ) : (
+    <div className="flex flex-col gap-3 py-1">
+      {chatMessages.length === 0 && (
         <p className="text-slate-400 text-sm">No transcript stored.</p>
       )}
+      {chatMessages.map((msg, i) => {
+        const isAgent = msg.author_type === 'admin';
+        const isBot   = msg.author_type === 'bot' || msg.author_type === 'operator';
+        const label   = isAgent ? 'Agent' : isBot ? 'Bot' : 'Player';
+        return (
+          <div key={i} className={`flex flex-col gap-1 ${isAgent ? 'items-end' : 'items-start'}`}>
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 px-1">
+              {label}
+            </span>
+            <div
+              className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl text-xs leading-relaxed break-words whitespace-pre-wrap
+                ${isAgent
+                  ? 'bg-[#1b3a5c] text-white rounded-tr-sm'
+                  : isBot
+                    ? 'bg-slate-100 text-slate-600 rounded-tl-sm border border-slate-200'
+                    : 'bg-white text-slate-800 rounded-tl-sm border border-slate-200 shadow-sm'
+                }`}
+            >
+              {msg.body}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 

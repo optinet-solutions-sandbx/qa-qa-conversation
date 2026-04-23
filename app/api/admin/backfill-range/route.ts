@@ -89,6 +89,7 @@ async function backfillDate(date: string, apiKey: string): Promise<{ saved: numb
           agent_performance_score: null, agent_performance_notes: null,
           key_quotes: null, recommended_action: null,
           is_alert_worthy: false, alert_reason: null,
+          account_manager: data.account_manager,
           last_prompt_id: null, last_prompt_content: null,
         };
         await dbInsertConversation(conv);

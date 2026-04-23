@@ -59,6 +59,7 @@ function mapConversationRow(c: Record<string, any>, notes: ConversationNote[] = 
     recommended_action: c.recommended_action ?? null,
     is_alert_worthy: c.is_alert_worthy ?? false,
     alert_reason: c.alert_reason ?? null,
+    account_manager: c.account_manager ?? null,
     original_text: c.original_text ?? null,
     raw_messages: c.raw_messages ?? null,
     last_prompt_id: c.last_prompt_id ?? null,
@@ -132,6 +133,7 @@ function conversationRow(c: Conversation) {
     recommended_action: c.recommended_action,
     is_alert_worthy: c.is_alert_worthy,
     alert_reason: c.alert_reason,
+    account_manager: c.account_manager,
 
     original_text: c.original_text,
     raw_messages: c.raw_messages ?? null,
@@ -199,6 +201,7 @@ export async function dbUpdateConversationByIntercomId(c: Conversation): Promise
     time_to_first_close: c.time_to_first_close != null ? Math.round(c.time_to_first_close) : null,
     median_time_to_reply: c.median_time_to_reply != null ? Math.round(c.median_time_to_reply) : null,
     count_reopens: c.count_reopens != null ? Math.round(c.count_reopens) : null,
+    account_manager: c.account_manager,
     original_text: c.original_text,
     raw_messages: c.raw_messages ?? null,
   }).eq('intercom_id', c.intercom_id);
@@ -401,6 +404,7 @@ export interface ConversationFilters {
   language?: string;
   brand?: string;
   agent_name?: string;
+  account_manager?: string;
   dateFrom?: string;
   dateTo?: string;
   analyzed?: boolean;
@@ -432,6 +436,9 @@ export async function loadConversations(
   if (filters.agent_name) {
     if (filters.agent_name.toLowerCase() === 'unknown') query = query.is('agent_name', null);
     else                                                query = query.eq('agent_name', filters.agent_name);
+  }
+  if (filters.account_manager) {
+    query = query.eq('account_manager', filters.account_manager);
   }
   if (filters.dateFrom)              query = query.gte('intercom_created_at', new Date(filters.dateFrom).toISOString());
   if (filters.dateTo) {
@@ -482,6 +489,13 @@ function buildJsonFilterBaseQuery(fields: string, filters: ConversationFilters):
   if (filters.agent_name) {
     if (filters.agent_name.toLowerCase() === 'unknown') q = q.is('agent_name', null);
     else                                                q = q.eq('agent_name', filters.agent_name);
+  }
+  if (filters.account_manager) {
+    const groups = getAmGroupsForFilter(filters.account_manager);
+    if (groups.length > 0) {
+      const groupSet = `{${groups.join(',')}}`;
+      q = q.or(`player_tags.ov.${groupSet},player_segments.ov.${groupSet},tags.ov.${groupSet}`);
+    }
   }
   if (filters.dateFrom)              q = q.gte('intercom_created_at', new Date(filters.dateFrom).toISOString());
   if (filters.dateTo) {

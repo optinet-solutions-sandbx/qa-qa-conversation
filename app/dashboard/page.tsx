@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ConversationsOverlay from '@/components/dashboard/ConversationsOverlay';
+import { AM_NAMES } from '@/lib/utils';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line,
@@ -89,6 +90,7 @@ const OVERLAY_LABELS: Record<string, string> = {
   language:                 'Language',
   brand:                    'Brand',
   agent_name:               'Agent',
+  account_manager:          'Account Manager',
   dateFrom:                 'Date',
   analyzed:                 'Analyzed',
   alert_worthy:             'Alert-worthy',
@@ -262,19 +264,21 @@ export default function DashboardPage() {
   const [overlayTitle, setOverlayTitle]     = useState('');
 
   // Filters — default to yesterday so the dashboard opens with populated data
-  const [dateFrom, setDateFrom]       = useState(yesterdayISO);
-  const [dateTo, setDateTo]           = useState(yesterdayISO);
-  const [brand, setBrand]             = useState('');
-  const [agent, setAgent]             = useState('');
-  const [categories, setCategories]   = useState<string[]>([]);
-  const [issues, setIssues]           = useState<string[]>([]);
+  const [dateFrom, setDateFrom]               = useState(yesterdayISO);
+  const [dateTo, setDateTo]                   = useState(yesterdayISO);
+  const [brand, setBrand]                     = useState('');
+  const [agent, setAgent]                     = useState('');
+  const [accountManager, setAccountManager]   = useState('');
+  const [categories, setCategories]           = useState<string[]>([]);
+  const [issues, setIssues]                   = useState<string[]>([]);
 
   const navToConversations = useCallback((extra: Record<string, string>) => {
     const filters: Record<string, string> = {};
-    if (dateFrom) filters.dateFrom = dateFrom;
-    if (dateTo)   filters.dateTo   = dateTo;
-    if (brand)    filters.brand    = brand;
-    if (agent)    filters.agent_name = agent;
+    if (dateFrom)        filters.dateFrom        = dateFrom;
+    if (dateTo)          filters.dateTo          = dateTo;
+    if (brand)           filters.brand           = brand;
+    if (agent)           filters.agent_name      = agent;
+    if (accountManager)  filters.account_manager = accountManager;
     if (categories.length === 1) filters.issue_category = categories[0];
     if (issues.length === 1)     filters.issue_item     = issues[0];
     Object.entries(extra).forEach(([k, v]) => { if (v) filters[k] = v; });
@@ -294,16 +298,17 @@ export default function DashboardPage() {
     setOverlayTitle(title);
     setOverlayFilters(filters);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo, brand, agent, categories, issues]);
+  }, [dateFrom, dateTo, brand, agent, accountManager, categories, issues]);
 
   const forceRef = useRef(false);
 
   const fetchData = useCallback(async () => {
     const params = new URLSearchParams();
-    if (dateFrom) params.set('dateFrom', dateFrom);
-    if (dateTo)   params.set('dateTo',   dateTo);
-    if (brand)    params.set('brand',    brand);
-    if (agent)    params.set('agent',    agent);
+    if (dateFrom)       params.set('dateFrom',       dateFrom);
+    if (dateTo)         params.set('dateTo',         dateTo);
+    if (brand)          params.set('brand',          brand);
+    if (agent)          params.set('agent',          agent);
+    if (accountManager) params.set('accountManager', accountManager);
     categories.forEach((c) => params.append('category', c));
     issues.forEach((i) => params.append('issue', i));
 
@@ -333,7 +338,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, brand, agent, categories, issues]);
+  }, [dateFrom, dateTo, brand, agent, accountManager, categories, issues]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -423,6 +428,17 @@ export default function DashboardPage() {
           </select>
         </div>
         <div>
+          <label className="block text-xs font-medium text-slate-500 mb-1">Account Manager</label>
+          <select
+            value={accountManager}
+            onChange={(e) => setAccountManager(e.target.value)}
+            className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">All AMs</option>
+            {AM_NAMES.map((am) => <option key={am} value={am}>{am}</option>)}
+          </select>
+        </div>
+        <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Category</label>
           <MultiSelectFilter
             options={categoryOptions}
@@ -447,9 +463,9 @@ export default function DashboardPage() {
             disabled={categories.length === 0}
           />
         </div>
-        {(dateFrom || dateTo || brand || agent || categories.length > 0 || issues.length > 0) && (
+        {(dateFrom || dateTo || brand || agent || accountManager || categories.length > 0 || issues.length > 0) && (
           <button
-            onClick={() => { setDateFrom(''); setDateTo(''); setBrand(''); setAgent(''); setCategories([]); setIssues([]); }}
+            onClick={() => { setDateFrom(''); setDateTo(''); setBrand(''); setAgent(''); setAccountManager(''); setCategories([]); setIssues([]); }}
             className="text-xs text-slate-400 hover:text-slate-600 underline pb-1.5"
           >
             Clear filters

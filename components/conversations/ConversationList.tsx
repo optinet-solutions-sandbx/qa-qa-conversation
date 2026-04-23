@@ -211,6 +211,7 @@ export default function ConversationList({ filters }: { filters?: ConversationFi
       if (filters?.language)                 params.set('language',                 filters.language);
       if (filters?.brand)                    params.set('brand',                    filters.brand);
       if (filters?.agent_name)               params.set('agent_name',               filters.agent_name);
+      if (filters?.account_manager)          params.set('account_manager',          filters.account_manager);
       if (filters?.dateFrom)                 params.set('dateFrom',                 filters.dateFrom);
       if (filters?.dateTo)                   params.set('dateTo',                   filters.dateTo);
       if (filters?.analyzed !== undefined)   params.set('analyzed',                 String(filters.analyzed));
@@ -388,6 +389,7 @@ export default function ConversationList({ filters }: { filters?: ConversationFi
           {filters.language                 && <FilterTag label={`Language: ${filters.language}`} />}
           {filters.brand                    && <FilterTag label={`Brand: ${filters.brand}`} />}
           {filters.agent_name               && <FilterTag label={`Agent: ${filters.agent_name}`} />}
+          {filters.account_manager          && <FilterTag label={`Account Manager: ${filters.account_manager}`} />}
           {(filters.dateFrom || filters.dateTo) && (
             <FilterTag label={`Date: ${filters.dateFrom ?? ''}${filters.dateFrom && filters.dateTo ? ' – ' : ''}${filters.dateTo ?? ''}`} />
           )}

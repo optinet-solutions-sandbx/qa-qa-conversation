@@ -101,6 +101,9 @@ export interface Conversation {
   last_prompt_id: string | null;
   last_prompt_content: string | null;
 
+  // Derived — stored for efficient filtering
+  account_manager: string | null;
+
   // Transcript & notes
   original_text: string | null;
   raw_messages: RawMessage[] | null;
@@ -168,6 +171,9 @@ export interface ConversationFetchResult {
   time_to_first_close: number | null;
   median_time_to_reply: number | null;
   count_reopens: number | null;
+
+  // Derived at collection time
+  account_manager: string | null;
 
   transcript: string;
   raw_messages: RawMessage[];
