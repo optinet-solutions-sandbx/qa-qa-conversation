@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useStore } from '@/lib/store';
 import { useToast } from '@/components/layout/ToastProvider';
@@ -532,7 +533,21 @@ export default function CollectPage() {
                         </tr>
                       ))
                     : rows.map((row) => (
-                        <tr key={row.id} className={`hover:bg-slate-50 transition-colors ${selected.has(row.id) ? 'bg-blue-50/40' : ''}`}>
+                        <tr
+                          key={row.id}
+                          onClick={(e) => {
+                            if (e.ctrlKey || e.metaKey) {
+                              window.open(`/conversations/${row.id}`, '_blank');
+                            }
+                          }}
+                          onMouseDown={(e) => {
+                            if (e.button === 1) {
+                              e.preventDefault();
+                              window.open(`/conversations/${row.id}`, '_blank');
+                            }
+                          }}
+                          className={`hover:bg-slate-50 transition-colors ${selected.has(row.id) ? 'bg-blue-50/40' : ''}`}
+                        >
                           <td className="px-4 py-3">
                             <input type="checkbox" checked={selected.has(row.id)} onChange={() => toggleSelect(row.id)} className="rounded border-slate-300 text-blue-600 focus:ring-blue-500" />
                           </td>
@@ -554,9 +569,9 @@ export default function CollectPage() {
                           <td className="px-4 py-3"><AnalyzedBadge conv={row} /></td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-1 justify-end">
-                              <button onClick={() => router.push(`/conversations/${row.id}`)} className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="View conversation">
+                              <Link href={`/conversations/${row.id}`} onClick={(e) => e.stopPropagation()} className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors" title="View conversation">
                                 <IconEye />
-                              </button>
+                              </Link>
                               <button onClick={(e) => deleteOne(row, e)} className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 transition-colors" title="Delete">
                                 <IconTrash />
                               </button>
