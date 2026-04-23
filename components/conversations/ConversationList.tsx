@@ -6,7 +6,7 @@ import { useStore } from '@/lib/store';
 import { useToast } from '@/components/layout/ToastProvider';
 import { useConfirm } from '@/components/layout/ConfirmProvider';
 import { dbDeleteConversation } from '@/lib/db-client';
-import { getSegment, getVipLevel, getAccountManager } from '@/lib/utils';
+import { getSegment, getVipLevel, getAccountManager, parseSummaryForTable } from '@/lib/utils';
 import type { Conversation } from '@/lib/types';
 import type { ConversationFilters } from '@/lib/db';
 import BulkAnalysisModal from './BulkAnalysisModal';
@@ -64,6 +64,7 @@ function detectLanguage(text: string): string | null {
   }
   return bestScore >= 2 ? best : null;
 }
+
 
 function getLanguage(conv: Conversation): string | null {
   if (conv.language) return conv.language;
@@ -431,6 +432,7 @@ export default function ConversationList({ filters }: { filters?: ConversationFi
                   <th className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">Date</th>
                   <th className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Category</th>
                   <th className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Issue</th>
+                  <th className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Summary</th>
                   <th className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">Segment</th>
                   <th className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">VIP Level</th>
                   <th className="px-3 py-2.5 text-left text-[11px] font-semibold text-slate-400 uppercase tracking-wider whitespace-nowrap">Chat Agent</th>
@@ -446,6 +448,7 @@ export default function ConversationList({ filters }: { filters?: ConversationFi
                   const segment = getSegment(conv);
                   const vipLevel = getVipLevel(conv);
                   const accountManager = getAccountManager(conv);
+                  const aiFields = parseSummaryForTable(conv.summary);
                   const isSelected = selected.has(conv.id);
 
                   return (
@@ -494,8 +497,8 @@ export default function ConversationList({ filters }: { filters?: ConversationFi
 
                       {/* Category */}
                       <td className="px-3 py-2.5 max-w-[180px]">
-                        <span className="block truncate text-slate-700" title={conv.issue_category ?? undefined}>
-                          {conv.issue_category ?? <span className="text-slate-300">—</span>}
+                        <span className="block truncate text-slate-700" title={aiFields.category ?? undefined}>
+                          {aiFields.category ?? <span className="text-slate-300">—</span>}
                         </span>
                       </td>
 
@@ -507,10 +510,17 @@ export default function ConversationList({ filters }: { filters?: ConversationFi
                               <IconAlert />
                             </span>
                           )}
-                          <span className="block truncate text-slate-800 font-medium" title={conv.query_type ?? conv.title}>
-                            {conv.query_type || conv.title || <span className="text-slate-300 font-normal">—</span>}
+                          <span className="block truncate text-slate-800 font-medium" title={aiFields.issue ?? conv.ai_issue_summary ?? undefined}>
+                            {aiFields.issue || conv.ai_issue_summary || <span className="text-slate-300 font-normal">—</span>}
                           </span>
                         </div>
+                      </td>
+
+                      {/* Summary */}
+                      <td className="px-3 py-2.5 max-w-[260px]">
+                        <span className="block truncate text-slate-600 text-xs" title={aiFields.summary ?? undefined}>
+                          {aiFields.summary ?? <span className="text-slate-300">—</span>}
+                        </span>
                       </td>
 
                       {/* Segment */}

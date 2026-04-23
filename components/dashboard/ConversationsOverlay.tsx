@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { Conversation } from '@/lib/types';
-import { getSegment, getVipLevel, getAccountManager, getBacklinkFull } from '@/lib/utils';
+import { getSegment, getVipLevel, getAccountManager, getBacklinkFull, parseSummaryForTable } from '@/lib/utils';
 
 const INTERCOM_APP_ID = process.env.NEXT_PUBLIC_INTERCOM_APP_ID ?? '';
 
@@ -113,6 +113,7 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Date</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Category</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Issue</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Summary</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Segment</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">VIP Level</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Chat Agent</th>
@@ -125,19 +126,31 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
               <tbody className="divide-y divide-slate-50">
                 {conversations.map((conv) => (
                   <tr key={conv.id} className="hover:bg-blue-50/40 transition-colors">
-                    <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-500">
-                      {fmtDate(conv.intercom_created_at)}
-                    </td>
-                    <td className="px-4 py-3 max-w-[160px]">
-                      <span className="text-xs text-slate-600 truncate block" title={conv.issue_category ?? ''}>
-                        {conv.issue_category ?? '—'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 max-w-[200px]">
-                      <span className="text-xs text-slate-500 truncate block" title={conv.ai_issue_summary ?? ''}>
-                        {conv.ai_issue_summary ?? '—'}
-                      </span>
-                    </td>
+                    {(() => {
+                      const aiFields = parseSummaryForTable(conv.summary);
+                      return (
+                        <>
+                          <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-500">
+                            {fmtDate(conv.intercom_created_at)}
+                          </td>
+                          <td className="px-4 py-3 max-w-[160px]">
+                            <span className="text-xs text-slate-600 truncate block" title={aiFields.category ?? ''}>
+                              {aiFields.category ?? '—'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 max-w-[200px]">
+                            <span className="text-xs text-slate-500 truncate block" title={aiFields.issue ?? conv.ai_issue_summary ?? ''}>
+                              {aiFields.issue || conv.ai_issue_summary || '—'}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 max-w-[260px]">
+                            <span className="text-xs text-slate-500 truncate block" title={aiFields.summary ?? ''}>
+                              {aiFields.summary ?? '—'}
+                            </span>
+                          </td>
+                        </>
+                      );
+                    })()}
                     <td className="px-4 py-3 whitespace-nowrap">
                       {(() => {
                         const seg = getSegment(conv);

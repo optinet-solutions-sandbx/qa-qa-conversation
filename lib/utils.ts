@@ -146,3 +146,44 @@ export function getBacklinkFull(conv: Conversation): string | null {
     'backlinkfull', 'backlink_full', 'backlinkFull', 'BacklinkFull', 'backlink',
   );
 }
+
+// ── AI summary helpers ───────────────────────────────────────────────────────
+
+function stripSummaryFences(text: string): string {
+  return text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '').trim();
+}
+
+export function parseSummaryForTable(raw: string | null): { category: string | null; issue: string | null; summary: string | null } {
+  if (!raw) return { category: null, issue: null, summary: null };
+  try {
+    const json = JSON.parse(stripSummaryFences(raw));
+    if (!json || typeof json !== 'object' || Array.isArray(json)) return { category: null, issue: null, summary: null };
+
+    // Category: prefer results[0].category, fall back to top-level keys
+    const results: { category?: string; item?: string }[] = Array.isArray(json.results) ? json.results : [];
+    const first = results[0];
+    const rawCat =
+      first?.category ??
+      (typeof json.category === 'string' ? json.category : null) ??
+      (typeof json.issue_category === 'string' ? json.issue_category : null) ??
+      null;
+    const category = rawCat ? rawCat.replace(/^category\s+(\d+)[:\s]+/i, '$1. ').trim() : null;
+
+    // Issue: prefer results[0].item, fall back to top-level issue keys
+    const issue =
+      first?.item ??
+      (typeof json.issue === 'string' ? json.issue : null) ??
+      (typeof json.item === 'string' ? json.item : null) ??
+      (typeof json.issue_item === 'string' ? json.issue_item : null) ??
+      null;
+
+    // Summary: json.summary is the canonical key; also try common alternatives
+    const summary =
+      (typeof json.summary === 'string' ? json.summary.trim() || null : null) ??
+      (typeof json.analysis_summary === 'string' ? json.analysis_summary.trim() || null : null) ??
+      (typeof json.overall_summary === 'string' ? json.overall_summary.trim() || null : null) ??
+      null;
+
+    return { category, issue, summary };
+  } catch { return { category: null, issue: null, summary: null }; }
+}
