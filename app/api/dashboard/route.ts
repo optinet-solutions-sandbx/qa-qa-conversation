@@ -59,7 +59,12 @@ export async function GET(req: NextRequest) {
       if (brand)          q = q.eq('brand', brand);
       if (agent)          q = q.eq('agent_name', agent);
       if (accountManager) {
-        q = q.eq('account_manager', accountManager);
+        const lower = accountManager.toLowerCase();
+        const amTags = lower === 'softswiss'
+          ? ['group: softswiss🎲', 'group: softswiss dach', 'group: softswiss english', 'group: softswiss']
+          : [`group: vip_${lower}🎲`, `group: non-vip_${lower}🎲`];
+        const quotedTags = amTags.map((t: string) => `"${t}"`).join(',');
+        q = q.or(`account_manager.eq.${accountManager},player_tags.ov.{${quotedTags}}`);
       }
       return q;
     };
