@@ -117,6 +117,7 @@ export default function AddConversationModal({ onClose }: Props) {
       time_to_first_close: r.time_to_first_close,
       median_time_to_reply: r.median_time_to_reply,
       count_reopens: r.count_reopens,
+      account_manager: r.account_manager,
 
       sentiment: existing?.sentiment ?? null,
       summary: existing?.summary ?? null,
