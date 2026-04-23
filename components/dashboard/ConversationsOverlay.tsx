@@ -2,7 +2,9 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { Conversation } from '@/lib/types';
-import { getSegment, getVipLevel, getAccountManager } from '@/lib/utils';
+import { getSegment, getVipLevel, getAccountManager, getBacklinkFull } from '@/lib/utils';
+
+const INTERCOM_APP_ID = process.env.NEXT_PUBLIC_INTERCOM_APP_ID ?? '';
 
 interface Props {
   filters: Record<string, string>;
@@ -164,9 +166,9 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center gap-2">
-                        {conv.intercom_id ? (
+                        {conv.intercom_id && INTERCOM_APP_ID ? (
                           <a
-                            href={`https://app.intercom.com/a/conversations/${conv.intercom_id}`}
+                            href={`https://app.intercom.com/a/apps/${INTERCOM_APP_ID}/conversations/${conv.intercom_id}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-[11px] font-semibold text-sky-600 hover:text-sky-800 hover:underline"
@@ -177,9 +179,9 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                           <span className="text-[11px] text-slate-300">Chat</span>
                         )}
                         <span className="text-slate-200 select-none">·</span>
-                        {conv.player_id ? (
+                        {getBacklinkFull(conv) ? (
                           <a
-                            href={`https://app.intercom.com/a/contacts/${conv.player_id}`}
+                            href={getBacklinkFull(conv)!}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-[11px] font-semibold text-sky-600 hover:text-sky-800 hover:underline"

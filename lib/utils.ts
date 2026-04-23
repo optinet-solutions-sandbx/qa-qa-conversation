@@ -73,3 +73,10 @@ export function getAccountManager(conv: Conversation): string | null {
     'Account Manager', 'account_manager', 'AccountManager', 'AM', 'Account Mgr',
   );
 }
+
+export function getBacklinkFull(conv: Conversation): string | null {
+  return getCustomAttr(
+    conv.player_custom_attributes,
+    'backlinkfull', 'backlink_full', 'backlinkFull', 'BacklinkFull', 'backlink',
+  );
+}
