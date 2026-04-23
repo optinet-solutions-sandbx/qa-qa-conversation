@@ -132,16 +132,14 @@ function FilterTag({ label }: { label: string }) {
   );
 }
 
-function SegmentBadge({ segment }: { segment: 'VIP' | 'NONVIP' }) {
-  return segment === 'VIP' ? (
-    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold tracking-wide text-yellow-600">
-      VIP
-    </span>
-  ) : (
-    <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold tracking-wide text-blue-600">
-      NONVIP
-    </span>
-  );
+function SegmentBadge({ segment }: { segment: 'VIP' | 'NON-VIP' | 'SoftSwiss' }) {
+  if (segment === 'VIP') {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold tracking-wide text-yellow-600">VIP</span>;
+  }
+  if (segment === 'SoftSwiss') {
+    return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold tracking-wide text-slate-400">SoftSwiss</span>;
+  }
+  return <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold tracking-wide text-blue-600">NON-VIP</span>;
 }
 
 function getPageNumbers(current: number, totalPages: number): (number | '...')[] {

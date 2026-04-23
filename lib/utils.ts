@@ -48,21 +48,24 @@ function getCustomAttr(attrs: Record<string, unknown> | null, ...keys: string[])
 }
 
 // ── Account Manager group mapping ────────────────────────────────────────────
-// Intercom groups that encode which AM owns a player.
-// VIP_<Name> → VIP segment, NON-VIP_<Name> → NON-VIP segment.
-// SoftSwiss is a NON-VIP group with no named AM.
-
-export const AM_NAMES = ['Ada', 'Christian', 'Salvatore', 'Esam', 'Koko', 'SoftSwiss'] as const;
-export type AmName = typeof AM_NAMES[number];
-
-export const AM_GROUP_MAP: Record<string, string[]> = {
-  Ada:       ['vip_ada',       'non-vip_ada'],
-  Christian: ['vip_christian', 'non-vip_christian'],
-  Salvatore: ['vip_salvatore', 'non-vip_salvatore'],
-  Esam:      ['vip_esam',      'non-vip_esam'],
-  Koko:      ['vip_koko',      'non-vip_koko'],
-  SoftSwiss: ['softswiss'],
+// Maps each normalized Intercom group to its AM display name.
+// VIP and NON-VIP groups for the same base can resolve to different AMs.
+export const GROUP_TO_AM: Record<string, string> = {
+  'vip_ada':           'Nik',
+  'non-vip_ada':       'Nik',
+  'vip_christian':     'Christian',
+  'non-vip_christian': 'Niklas',
+  'vip_salvatore':     'Salvatore',
+  'non-vip_salvatore': 'Stefano',
+  'vip_esam':          'Esam',
+  'non-vip_esam':      'Yassine',
+  'vip_koko':          'Koko',
+  'non-vip_koko':      'Geri/Nik',
+  'softswiss':         'SoftSwiss',
 };
+
+export const AM_NAMES = ['Nik', 'Christian', 'Niklas', 'Salvatore', 'Stefano', 'Esam', 'Yassine', 'Koko', 'Geri/Nik', 'SoftSwiss'] as const;
+export type AmName = typeof AM_NAMES[number];
 
 // Strips "group: " prefix, emoji / non-ASCII chars (e.g. 🎲), whitespace, and lowercases.
 // Handles Intercom tag formats: "group: VIP_Ada", "group: vip_ada🎲", "group: softswiss dach", etc.
@@ -75,20 +78,13 @@ export function normalizeGroupName(g: string): string {
 }
 
 export function getAmGroupsForFilter(am: string): string[] {
-  return AM_GROUP_MAP[am] ?? [];
+  return Object.entries(GROUP_TO_AM)
+    .filter(([, displayName]) => displayName === am)
+    .map(([group]) => group);
 }
 
-export function getSegment(conv: Conversation): 'VIP' | 'NONVIP' | null {
-  const seg = getCustomAttr(conv.player_custom_attributes, 'Segment', 'segment', 'vip_segment', 'VIP Segment', 'Player Segment');
-  if (seg) {
-    const s = seg.toUpperCase().replace(/[\s-]/g, '');
-    if (s === 'VIP') return 'VIP';
-    if (s === 'NONVIP') return 'NONVIP';
-  }
-  const segs = conv.player_segments ?? [];
-  if (segs.some((s) => /^vip$/i.test(s.trim()))) return 'VIP';
-  if (segs.some((s) => /non.?vip/i.test(s))) return 'NONVIP';
-  // Derive from AM groups — check all sources including company names
+export function getSegment(conv: Conversation): 'VIP' | 'NON-VIP' | 'SoftSwiss' | null {
+  // SoftSwiss group membership takes priority over any custom attribute
   const companyNames = (conv.player_companies ?? []).map((c) => c.name);
   const allGroups = [
     ...(conv.player_tags ?? []),
@@ -96,11 +92,19 @@ export function getSegment(conv: Conversation): 'VIP' | 'NONVIP' | null {
     ...(conv.tags ?? []),
     ...companyNames,
   ];
+  if (allGroups.some((g) => { const n = normalizeGroupName(g); return n === 'softswiss' || n.startsWith('softswiss '); })) return 'SoftSwiss';
+  // Then check custom attributes and explicit segment values
+  const seg = getCustomAttr(conv.player_custom_attributes, 'Segment', 'segment', 'vip_segment', 'VIP Segment', 'Player Segment');
+  if (seg) {
+    const s = seg.toUpperCase().replace(/[\s-]/g, '');
+    if (s === 'VIP') return 'VIP';
+    if (s === 'NONVIP') return 'NON-VIP';
+  }
+  const segs = conv.player_segments ?? [];
+  if (segs.some((s) => /^vip$/i.test(s.trim()))) return 'VIP';
+  if (segs.some((s) => /non.?vip/i.test(s))) return 'NON-VIP';
   if (allGroups.some((g) => /^vip_/.test(normalizeGroupName(g)))) return 'VIP';
-  if (allGroups.some((g) => {
-    const n = normalizeGroupName(g);
-    return /^non-vip_/.test(n) || n === 'softswiss' || n.startsWith('softswiss ');
-  })) return 'NONVIP';
+  if (allGroups.some((g) => /^non-vip_/.test(normalizeGroupName(g)))) return 'NON-VIP';
   return null;
 }
 
@@ -113,14 +117,7 @@ export function getVipLevel(conv: Conversation): string | null {
 
 export function getAccountManager(conv: Conversation): string | null {
   // Prefer the stored column (populated at collection time for all sources)
-  if (conv.account_manager) return conv.account_manager;
-  // Fallback for pre-migration rows: check custom attributes
-  const fromAttrs = getCustomAttr(
-    conv.player_custom_attributes,
-    'Account Manager', 'account_manager', 'AccountManager', 'AM', 'Account Mgr',
-  );
-  if (fromAttrs) return fromAttrs;
-  // Fallback: check all group arrays including company names
+  // Derive from group membership first — works for both new and legacy rows
   const companyNames = (conv.player_companies ?? []).map((c) => c.name);
   const allGroups = [
     ...(conv.player_tags ?? []),
@@ -129,14 +126,18 @@ export function getAccountManager(conv: Conversation): string | null {
     ...companyNames,
   ];
   const normalizedGroups = allGroups.map(normalizeGroupName);
-  for (const [am, groups] of Object.entries(AM_GROUP_MAP)) {
-    if (am === 'SoftSwiss') {
-      if (normalizedGroups.some((n) => n === 'softswiss' || n.startsWith('softswiss '))) return am;
-    } else if (groups.some((g) => normalizedGroups.includes(g))) {
-      return am;
-    }
+  if (normalizedGroups.some((n) => n === 'softswiss' || n.startsWith('softswiss '))) return GROUP_TO_AM['softswiss'];
+  for (const [group, am] of Object.entries(GROUP_TO_AM)) {
+    if (group === 'softswiss') continue;
+    if (normalizedGroups.includes(group)) return am;
   }
-  return null;
+  // Fall back to stored value (custom attribute or pre-migration cached name)
+  const fromAttrs = getCustomAttr(
+    conv.player_custom_attributes,
+    'Account Manager', 'account_manager', 'AccountManager', 'AM', 'Account Mgr',
+  );
+  if (fromAttrs) return fromAttrs;
+  return conv.account_manager ?? null;
 }
 
 export function getBacklinkFull(conv: Conversation): string | null {

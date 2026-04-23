@@ -142,9 +142,9 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                       {(() => {
                         const seg = getSegment(conv);
                         if (!seg) return <span className="text-xs text-slate-300">—</span>;
-                        return seg === 'VIP'
-                          ? <span className="text-[11px] font-bold px-2 py-0.5 rounded text-yellow-600">VIP</span>
-                          : <span className="text-[11px] font-bold px-2 py-0.5 rounded text-blue-600">NONVIP</span>;
+                        if (seg === 'VIP') return <span className="text-[11px] font-bold px-2 py-0.5 rounded text-yellow-600">VIP</span>;
+                        if (seg === 'SoftSwiss') return <span className="text-[11px] font-bold px-2 py-0.5 rounded text-slate-400">SoftSwiss</span>;
+                        return <span className="text-[11px] font-bold px-2 py-0.5 rounded text-blue-600">NON-VIP</span>;
                       })()}
                     </td>
                     <td className="px-4 py-3 max-w-[140px]">
