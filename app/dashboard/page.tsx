@@ -264,8 +264,14 @@ export default function DashboardPage() {
   const [overlayTitle, setOverlayTitle]     = useState('');
 
   // Filters — default to yesterday so the dashboard opens with populated data
-  const [dateFrom, setDateFrom]               = useState(yesterdayISO);
-  const [dateTo, setDateTo]                   = useState(yesterdayISO);
+  const [dateFrom, setDateFrom] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('dashboard-dateFrom') || yesterdayISO();
+    return yesterdayISO();
+  });
+  const [dateTo, setDateTo] = useState(() => {
+    if (typeof window !== 'undefined') return localStorage.getItem('dashboard-dateTo') || yesterdayISO();
+    return yesterdayISO();
+  });
   const [brand, setBrand]                     = useState('');
   const [agent, setAgent]                     = useState('');
   const [accountManager, setAccountManager]   = useState('');
@@ -392,7 +398,7 @@ export default function DashboardPage() {
           <input
             type="date"
             value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
+            onChange={(e) => { setDateFrom(e.target.value); localStorage.setItem('dashboard-dateFrom', e.target.value); }}
             className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -401,7 +407,7 @@ export default function DashboardPage() {
           <input
             type="date"
             value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
+            onChange={(e) => { setDateTo(e.target.value); localStorage.setItem('dashboard-dateTo', e.target.value); }}
             className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -465,7 +471,7 @@ export default function DashboardPage() {
         </div>
         {(dateFrom || dateTo || brand || agent || accountManager || categories.length > 0 || issues.length > 0) && (
           <button
-            onClick={() => { setDateFrom(''); setDateTo(''); setBrand(''); setAgent(''); setAccountManager(''); setCategories([]); setIssues([]); }}
+            onClick={() => { setDateFrom(''); setDateTo(''); setBrand(''); setAgent(''); setAccountManager(''); setCategories([]); setIssues([]); localStorage.removeItem('dashboard-dateFrom'); localStorage.removeItem('dashboard-dateTo'); }}
             className="text-xs text-slate-400 hover:text-slate-600 underline pb-1.5"
           >
             Clear filters
