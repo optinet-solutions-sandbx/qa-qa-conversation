@@ -142,12 +142,12 @@ export async function GET(req: NextRequest) {
     }
     const numPrefix = (s: string) => { const m = s.match(/^(\d+)\./); return m ? parseInt(m[1], 10) : 999; };
     const minCategoryCount = Math.max(3, Math.ceil(rows.length * 0.003));
+    const EXCLUDED_CATEGORY_PREFIXES = new Set([5]);
     const canonicalCategories = [
       '1. Account Closure & Self-Exclusion Requests',
       '2. Payments (Deposits, Limits, Refunds)',
       '3. Withdrawal Disputes',
       '4. Player Experience & Expectations (Retention)',
-      '5. Verification Issues',
     ];
     // Build a map of numeric prefix → canonical key so variants like
     // "1. Account Closure Requests" get folded into the canonical entry.
@@ -177,7 +177,7 @@ export async function GET(req: NextRequest) {
       }
     }
     const allCategoryLabels = Object.values(allCategoryFreq)
-      .filter(({ count }) => count >= minCategoryCount)
+      .filter(({ count, label }) => count >= minCategoryCount && !EXCLUDED_CATEGORY_PREFIXES.has(numPrefix(label)))
       .sort((a, b) => numPrefix(a.label) - numPrefix(b.label))
       .map(({ label }) => label);
 
@@ -259,6 +259,7 @@ export async function GET(req: NextRequest) {
       categoryMap[key].count++;
     }
     const topCategories = Object.values(categoryMap)
+      .filter(({ label }) => !EXCLUDED_CATEGORY_PREFIXES.has(numPrefix(label)))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10)
       .map(({ label, count }) => ({ label, count }));
