@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import type { Conversation, ConversationNote, PromptVersion, AnalysisResult, AnalysisRun } from '@/lib/types';
+import type { Conversation, ConversationNote, PromptVersion, AnalysisResult, AnalysisRun, RawMessage } from '@/lib/types';
 import { useStore } from '@/lib/store';
 import { useToast } from '@/components/layout/ToastProvider';
 import { useConfirm } from '@/components/layout/ConfirmProvider';
@@ -254,6 +254,39 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
   // ── Analysis state ─────────────────────────────────────────────────────────
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisResult, setAnalysisResult] = useState<AnalysisResult | null>(null);
+
+  // ── Backfilled messages (with timestamps) ──────────────────────────────────
+  const [refreshedMessages, setRefreshedMessages] = useState<RawMessage[] | null>(null);
+
+  // Auto-refetch raw_messages from Intercom if stored messages lack timestamps.
+  // Older rows were collected before message timestamps were captured; this
+  // silently backfills them so response-time deltas render on the transcript.
+  useEffect(() => {
+    setRefreshedMessages(null);
+    if (!conv.intercom_id) return;
+    const msgs = conv.raw_messages ?? [];
+    if (msgs.length === 0) return;
+    if (msgs.some((m) => m.created_at)) return;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/conversation/refresh-messages', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ intercomId: conv.intercom_id }),
+        });
+        if (!res.ok || cancelled) return;
+        const data = await res.json() as { raw_messages?: RawMessage[] };
+        if (cancelled || !data.raw_messages) return;
+        setRefreshedMessages(data.raw_messages);
+        updateConversation({ ...conv, raw_messages: data.raw_messages });
+      } catch { /* silent — transcript renders without timestamps */ }
+    })();
+
+    return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conv.id, conv.intercom_id]);
 
   // Init: use analysisRun if provided (history view), else restore last saved, else default prompt
   useEffect(() => {
@@ -546,8 +579,10 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
     </div>
   );
 
-  // Build structured messages from raw_messages, falling back to parsing original_text
+  // Build structured messages from raw_messages, falling back to parsing original_text.
+  // Prefer freshly-refetched messages (with timestamps) when available.
   const chatMessages: { author_type: string; body: string; created_at?: string | null }[] = (() => {
+    if (refreshedMessages && refreshedMessages.length > 0) return refreshedMessages;
     if (conv.raw_messages && conv.raw_messages.length > 0) return conv.raw_messages;
     if (!conv.original_text) return [];
     return conv.original_text.split('\n\n').flatMap((line) => {
