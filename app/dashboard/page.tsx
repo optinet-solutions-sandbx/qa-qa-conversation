@@ -76,10 +76,14 @@ const RESOLUTION_COLORS: Record<string, string> = {
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
-  Low:      '#22c55e',
-  Medium:   '#f59e0b',
-  High:     '#f97316',
-  Critical: '#ef4444',
+  'Level 1': '#22c55e',
+  'Level 2': '#f59e0b',
+  'Level 3': '#ef4444',
+  Unknown:   '#94a3b8',
+  Low:       '#22c55e',
+  Medium:    '#f59e0b',
+  High:      '#f97316',
+  Critical:  '#ef4444',
 };
 
 const OVERLAY_LABELS: Record<string, string> = {
@@ -277,6 +281,7 @@ export default function DashboardPage() {
   const [accountManager, setAccountManager]   = useState('');
   const [categories, setCategories]           = useState<string[]>([]);
   const [issues, setIssues]                   = useState<string[]>([]);
+  const [severity, setSeverity]               = useState('');
 
   const navToConversations = useCallback((extra: Record<string, string>) => {
     const filters: Record<string, string> = {};
@@ -287,6 +292,7 @@ export default function DashboardPage() {
     if (accountManager)  filters.account_manager = accountManager;
     if (categories.length === 1) filters.issue_category = categories[0];
     if (issues.length === 1)     filters.issue_item     = issues[0];
+    if (severity)        filters.dissatisfaction_severity = `Level ${severity}`;
     Object.entries(extra).forEach(([k, v]) => { if (v) filters[k] = v; });
 
     // Build a human-readable title from the extra filters
@@ -304,7 +310,7 @@ export default function DashboardPage() {
     setOverlayTitle(title);
     setOverlayFilters(filters);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo, brand, agent, accountManager, categories, issues]);
+  }, [dateFrom, dateTo, brand, agent, accountManager, categories, issues, severity]);
 
   const forceRef = useRef(false);
 
@@ -317,6 +323,7 @@ export default function DashboardPage() {
     if (accountManager) params.set('accountManager', accountManager);
     categories.forEach((c) => params.append('category', c));
     issues.forEach((i) => params.append('issue', i));
+    if (severity)       params.set('severity',       severity);
 
     const cacheKey = params.toString();
 
@@ -344,7 +351,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, brand, agent, accountManager, categories, issues]);
+  }, [dateFrom, dateTo, brand, agent, accountManager, categories, issues, severity]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -445,6 +452,19 @@ export default function DashboardPage() {
           </select>
         </div>
         <div>
+          <label className="block text-xs font-medium text-slate-500 mb-1">Severity</label>
+          <select
+            value={severity}
+            onChange={(e) => setSeverity(e.target.value)}
+            className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">All severities</option>
+            <option value="1">Severity 1</option>
+            <option value="2">Severity 2</option>
+            <option value="3">Severity 3</option>
+          </select>
+        </div>
+        <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Category</label>
           <MultiSelectFilter
             options={categoryOptions}
@@ -469,9 +489,9 @@ export default function DashboardPage() {
             disabled={categories.length === 0}
           />
         </div>
-        {(dateFrom || dateTo || brand || agent || accountManager || categories.length > 0 || issues.length > 0) && (
+        {(dateFrom || dateTo || brand || agent || accountManager || severity || categories.length > 0 || issues.length > 0) && (
           <button
-            onClick={() => { setDateFrom(''); setDateTo(''); setBrand(''); setAgent(''); setAccountManager(''); setCategories([]); setIssues([]); localStorage.removeItem('dashboard-dateFrom'); localStorage.removeItem('dashboard-dateTo'); }}
+            onClick={() => { setDateFrom(''); setDateTo(''); setBrand(''); setAgent(''); setAccountManager(''); setSeverity(''); setCategories([]); setIssues([]); localStorage.removeItem('dashboard-dateFrom'); localStorage.removeItem('dashboard-dateTo'); }}
             className="text-xs text-slate-400 hover:text-slate-600 underline pb-1.5"
           >
             Clear filters

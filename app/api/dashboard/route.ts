@@ -6,6 +6,7 @@ import {
   buildCategoryMatcher,
   buildIssueMatcher,
   applyConversationDbFilters,
+  normalizeSeverity,
 } from '@/lib/analyticsFilters';
 
 // Display helper: strip "Category N: " prefix, preserving original casing so the
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest) {
   const accountManager = searchParams.get('accountManager');
   const categories     = searchParams.getAll('category');
   const issues         = searchParams.getAll('issue');
+  const severity       = searchParams.get('severity');
 
   try {
     // Shared DB-level filter — the exact same helper is used by the drill-down
@@ -237,11 +239,32 @@ export async function GET(req: NextRequest) {
       filteredParsed = filteredParsed.filter((_, i) => keep[i]);
     }
 
+    const hasSeverityFilter = !!severity;
+    if (hasSeverityFilter) {
+      const target = normalizeSeverity(severity);
+      const keep = filteredParsed.map((p) => normalizeSeverity(p.severity) === target);
+      filteredRows   = filteredRows.filter((_, i) => keep[i]);
+      filteredParsed = filteredParsed.filter((_, i) => keep[i]);
+    }
+
     // ── Resolution breakdown ─────────────────────────────────────────────
     const resolutionBreakdown = countBy(filteredParsed, (p) => p.resolution_status);
 
     // ── Severity breakdown ───────────────────────────────────────────────
-    const severityBreakdown = countBy(filteredParsed, (p) => p.severity);
+    // The current prompt asks the AI for a numeric severity (1/2/3).  We
+    // normalise raw values to "Level 1/2/3" so variants like "1", "Level 1",
+    // or numeric JSON values all bucket together, and render an explicit
+    // "Unknown" bucket for everything else (legacy Low/Medium/High/Critical
+    // from older prompts, nulls, or values the AI didn't emit).  The 1/2/3
+    // buckets always appear on the chart even at zero count so the breakdown
+    // stays readable while the backlog re-analyses.
+    const SEVERITY_ORDER = ['Level 1', 'Level 2', 'Level 3', 'Unknown'];
+    const severityCounts: Record<string, number> = { 'Level 1': 0, 'Level 2': 0, 'Level 3': 0, Unknown: 0 };
+    for (const p of filteredParsed) {
+      const label = normalizeSeverity(p.severity) ?? 'Unknown';
+      severityCounts[label] = (severityCounts[label] ?? 0) + 1;
+    }
+    const severityBreakdown = SEVERITY_ORDER.map((label) => ({ label, count: severityCounts[label] ?? 0 }));
 
     // ── Language breakdown ───────────────────────────────────────────────
     const languageBreakdown = countBy(filteredParsed, (p) =>
@@ -291,7 +314,7 @@ export async function GET(req: NextRequest) {
     // When a category filter is active we can't use the DB RPC (it has no category
     // param), so we group the already-filtered in-memory rows by CEST date instead.
     let conversationsByDate: { date: string; count: number }[];
-    if (hasCategoryFilter || hasIssueFilter) {
+    if (hasCategoryFilter || hasIssueFilter || hasSeverityFilter) {
       const dateCounts: Record<string, number> = {};
       for (const r of filteredRows) {
         const iso = r.intercom_created_at as string | null;
@@ -360,7 +383,7 @@ export async function GET(req: NextRequest) {
     // When a category filter is active, the DB-level counts are global (the RPC
     // has no category param).  Use the in-memory filtered counts instead so the
     // stat cards reflect what the charts show.
-    const hasInMemoryFilter = hasCategoryFilter || hasIssueFilter;
+    const hasInMemoryFilter = hasCategoryFilter || hasIssueFilter || hasSeverityFilter;
     const overviewAnalyzed  = hasInMemoryFilter ? filteredRows.length  : analyzed;
     const overviewAlertWorthy = hasInMemoryFilter
       ? filteredRows.filter((r) => r.is_alert_worthy).length

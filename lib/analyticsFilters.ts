@@ -15,6 +15,7 @@ function stripFences(text: string): string {
 export interface AnalysisResult {
   category?: string | null;
   item?: string | null;
+  dissatisfaction_severity?: string | number | null;
 }
 
 export interface AnalysisSummary {
@@ -26,6 +27,32 @@ export interface AnalysisSummary {
   raw: Record<string, any> | null;
 }
 
+// Coerces the AI's severity value to a plain string regardless of whether it
+// arrived as a JSON string or a JSON number (the current prompt asks for
+// 1/2/3 and the AI often returns that as a number).
+function coerceSeverity(v: unknown): string | null {
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number') return String(v);
+  return null;
+}
+
+// Picks the worst (max) 1/2/3 severity found across the results[] entries.
+// The current prompt nests `dissatisfaction_severity` inside each result item
+// rather than at the top level, so without this fallback every analysed chat
+// looks like Unknown even when the AI did return a severity.
+function maxResultSeverity(results: AnalysisResult[]): string | null {
+  let max = 0;
+  for (const r of results) {
+    const s = coerceSeverity(r?.dissatisfaction_severity);
+    if (!s) continue;
+    const m = s.match(/[123]/);
+    if (!m) continue;
+    const n = parseInt(m[0], 10);
+    if (n > max) max = n;
+  }
+  return max > 0 ? String(max) : null;
+}
+
 export function parseAnalysisSummary(raw: string | null): AnalysisSummary {
   const empty: AnalysisSummary = { results: [], resolution_status: null, dissatisfaction_severity: null, language: null, raw: null };
   if (!raw) return empty;
@@ -35,16 +62,35 @@ export function parseAnalysisSummary(raw: string | null): AnalysisSummary {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const obj = parsed as Record<string, any>;
     const results: AnalysisResult[] = Array.isArray(obj.results) ? obj.results : [];
+    // Read severity from the top-level field first (older prompts), then fall
+    // back to the worst severity reported inside any results[] entry (current
+    // prompt nests it there).  This keeps the dashboard compatible with both
+    // prompt shapes without another re-analysis pass.
+    const severity = coerceSeverity(obj.dissatisfaction_severity) ?? maxResultSeverity(results);
     return {
       results,
-      resolution_status:        typeof obj.resolution_status        === 'string' ? obj.resolution_status        : null,
-      dissatisfaction_severity: typeof obj.dissatisfaction_severity === 'string' ? obj.dissatisfaction_severity : null,
-      language:                 typeof obj.language                 === 'string' ? obj.language                 : null,
+      resolution_status:        typeof obj.resolution_status === 'string' ? obj.resolution_status : null,
+      dissatisfaction_severity: severity,
+      language:                 typeof obj.language === 'string' ? obj.language : null,
       raw: obj,
     };
   } catch {
     return empty;
   }
+}
+
+// Normalises the severity value to one of "Level 1" / "Level 2" / "Level 3"
+// so the dashboard and drill-down can compare across AI output variants
+// ("1", "1 — Minor", "Level 1", "Severity: 1", etc).  Returns null for
+// values that do not carry a 1/2/3 level, so callers can bucket them as
+// Unknown (covers legacy Low/Medium/High/Critical values from older prompts).
+export function normalizeSeverity(raw: string | number | null | undefined): string | null {
+  if (raw == null) return null;
+  const s = String(raw).trim();
+  if (!s) return null;
+  const m = s.match(/[123]/);
+  if (!m) return null;
+  return `Level ${m[0]}`;
 }
 
 // ── Category / issue normalisation ─────────────────────────────────────────

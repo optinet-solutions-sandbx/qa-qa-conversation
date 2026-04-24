@@ -86,7 +86,10 @@ export interface Conversation {
   // AI analysis (null until analysis is run)
   sentiment: string | null;
   summary: string | null;
-  dissatisfaction_severity: 'Low' | 'Medium' | 'High' | 'Critical' | null;
+  // Raw value as written by the AI.  The default prompt now asks for a numeric
+  // level (1/2/3); older prompts returned Low/Medium/High/Critical.  Kept as a
+  // plain string so the dashboard normaliser can bucket either format.
+  dissatisfaction_severity: string | null;
   issue_category: string | null;
   resolution_status: 'Resolved' | 'Partially Resolved' | 'Unresolved' | null;
   language: string | null;

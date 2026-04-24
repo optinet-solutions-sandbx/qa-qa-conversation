@@ -6,6 +6,7 @@ import {
   buildCategoryMatcher,
   buildIssueMatcher,
   applyConversationDbFilters,
+  normalizeSeverity,
 } from './analyticsFilters';
 
 // ── Shared row mapper ──────────────────────────────────────────────────────
@@ -525,10 +526,16 @@ export async function loadConversationsWithJsonFilter(
   }
 
   if (filters.dissatisfaction_severity) {
-    const v = filters.dissatisfaction_severity.toLowerCase();
+    // Match against the normalised severity so a "Level 1" filter from the
+    // dashboard matches rows whose raw stored value is "1", "Level 1", or
+    // any other variant the AI has produced.  "Unknown" captures anything
+    // that does not normalise to a 1/2/3 level, including legacy
+    // Low/Medium/High/Critical values and rows with no severity at all.
+    const filterNorm = normalizeSeverity(filters.dissatisfaction_severity);
+    const filterIsUnknown = filters.dissatisfaction_severity.toLowerCase() === 'unknown' || !filterNorm;
     filtered = filtered.filter(({ summary }) => {
-      const val = summary.dissatisfaction_severity?.trim();
-      return v === 'unknown' ? !val : val?.toLowerCase() === v;
+      const rowNorm = normalizeSeverity(summary.dissatisfaction_severity);
+      return filterIsUnknown ? !rowNorm : rowNorm === filterNorm;
     });
   }
 
