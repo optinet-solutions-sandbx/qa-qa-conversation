@@ -116,6 +116,7 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Summary</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Segment</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">VIP Level</th>
+                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Player Name</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Chat Agent</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Account Manager</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Brand</th>
@@ -163,6 +164,11 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                     <td className="px-4 py-3 max-w-[140px]">
                       <span className="text-xs text-slate-600 truncate block" title={getVipLevel(conv) ?? undefined}>
                         {getVipLevel(conv) ?? <span className="text-slate-300">—</span>}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 max-w-[160px]">
+                      <span className="text-xs text-slate-600 truncate block" title={conv.player_name ?? undefined}>
+                        {conv.player_name ?? <span className="text-slate-300">—</span>}
                       </span>
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600">
