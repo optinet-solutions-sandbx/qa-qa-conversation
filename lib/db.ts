@@ -1,6 +1,12 @@
 import { supabase } from './supabase';
 import type { Conversation, ConversationNote, PromptVersion, AnalysisRun, SyncJob, BatchJob, BatchJobStatus, AiQuery } from './types';
 import { cestDateToUnixRange } from './intercom';
+import {
+  parseAnalysisSummary,
+  buildCategoryMatcher,
+  buildIssueMatcher,
+  applyConversationDbFilters,
+} from './analyticsFilters';
 
 // ── Shared row mapper ──────────────────────────────────────────────────────
 
@@ -52,7 +58,7 @@ function mapConversationRow(c: Record<string, any>, notes: ConversationNote[] = 
     dissatisfaction_severity: c.dissatisfaction_severity ?? null,
     issue_category: c.issue_category ?? null,
     resolution_status: c.resolution_status ?? null,
-    language: c.language ?? (parseSummary(c.summary)?.language as string | null) ?? null,
+    language: c.language ?? parseAnalysisSummary(c.summary).language ?? null,
     agent_performance_score: c.agent_performance_score ?? null,
     agent_performance_notes: c.agent_performance_notes ?? null,
     key_quotes: c.key_quotes ?? null,
@@ -429,29 +435,13 @@ export async function loadConversations(
     .order('intercom_created_at', { ascending: false })
     .range(from, to);
 
-  if (filters.brand) {
-    if (filters.brand.toLowerCase() === 'unknown') query = query.is('brand', null);
-    else                                           query = query.eq('brand', filters.brand);
-  }
-  if (filters.agent_name) {
-    if (filters.agent_name.toLowerCase() === 'unknown') query = query.is('agent_name', null);
-    else                                                query = query.eq('agent_name', filters.agent_name);
-  }
-  if (filters.account_manager) {
-    const am = filters.account_manager;
-    const lower = am.toLowerCase();
-    const amTags = lower === 'softswiss'
-      ? ['group: softswiss🎲', 'group: softswiss dach', 'group: softswiss english', 'group: softswiss']
-      : [`group: vip_${lower}🎲`, `group: non-vip_${lower}🎲`];
-    const quotedTags = amTags.map((t) => `"${t}"`).join(',');
-    query = query.or(`account_manager.eq.${am},player_tags.ov.{${quotedTags}}`);
-  }
-  if (filters.dateFrom)              query = query.gte('intercom_created_at', new Date(filters.dateFrom).toISOString());
-  if (filters.dateTo) {
-    const end = new Date(filters.dateTo);
-    end.setDate(end.getDate() + 1);
-    query = query.lt('intercom_created_at', end.toISOString());
-  }
+  query = applyConversationDbFilters(query, {
+    dateFrom:       filters.dateFrom,
+    dateTo:         filters.dateTo,
+    brand:          filters.brand,
+    agent:          filters.agent_name,
+    accountManager: filters.account_manager,
+  });
   if (filters.analyzed === true)     query = query.not('summary', 'is', null);
   if (filters.analyzed === false)    query = query.is('summary', null);
   if (filters.alert_worthy === true) query = query.eq('is_alert_worthy', true);
@@ -464,22 +454,9 @@ export async function loadConversations(
   };
 }
 
-// Strips markdown code fences that LLMs sometimes wrap JSON in.
-function stripSummaryFences(text: string): string {
-  return text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '').trim();
-}
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function parseSummary(raw: string | null): Record<string, any> | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(stripSummaryFences(raw));
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
-  } catch { return null; }
-}
-
 // Builds a Supabase query with only the DB-level filters (brand, agent, dates, alert_worthy).
-// Returns a fresh builder each call — safe to chain .range() onto.
+// Returns a fresh builder each call — safe to chain .range() onto.  Uses the same
+// shared helper as the dashboard route so both paths see the same base row set.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function buildJsonFilterBaseQuery(fields: string, filters: ConversationFilters): any {
   let q = supabase
@@ -488,29 +465,13 @@ function buildJsonFilterBaseQuery(fields: string, filters: ConversationFilters):
     .not('summary', 'is', null)
     .order('intercom_created_at', { ascending: false });
 
-  if (filters.brand) {
-    if (filters.brand.toLowerCase() === 'unknown') q = q.is('brand', null);
-    else                                           q = q.eq('brand', filters.brand);
-  }
-  if (filters.agent_name) {
-    if (filters.agent_name.toLowerCase() === 'unknown') q = q.is('agent_name', null);
-    else                                                q = q.eq('agent_name', filters.agent_name);
-  }
-  if (filters.account_manager) {
-    const am = filters.account_manager;
-    const lower = am.toLowerCase();
-    const amTags = lower === 'softswiss'
-      ? ['group: softswiss🎲', 'group: softswiss dach', 'group: softswiss english', 'group: softswiss']
-      : [`group: vip_${lower}🎲`, `group: non-vip_${lower}🎲`];
-    const quotedTags = amTags.map((t) => `"${t}"`).join(',');
-    q = q.or(`account_manager.eq.${am},player_tags.ov.{${quotedTags}}`);
-  }
-  if (filters.dateFrom)              q = q.gte('intercom_created_at', new Date(filters.dateFrom).toISOString());
-  if (filters.dateTo) {
-    const end = new Date(filters.dateTo);
-    end.setDate(end.getDate() + 1);
-    q = q.lt('intercom_created_at', end.toISOString());
-  }
+  q = applyConversationDbFilters(q, {
+    dateFrom:       filters.dateFrom,
+    dateTo:         filters.dateTo,
+    brand:          filters.brand,
+    agent:          filters.agent_name,
+    accountManager: filters.account_manager,
+  });
   if (filters.alert_worthy === true) q = q.eq('is_alert_worthy', true);
   return q;
 }
@@ -541,87 +502,51 @@ export async function loadConversationsWithJsonFilter(
   }
 
   // ── Step 2: apply JSON filters in memory ────────────────────────────────
-  let filtered = allSlim;
+  // Parse each summary once so every sub-filter reuses the same parsed shape.
+  // Using parseAnalysisSummary here — the same parser the dashboard route uses —
+  // is what guarantees the drill-down and the dashboard see identical data.
+  const parsedRows = allSlim.map((r) => ({ row: r, summary: parseAnalysisSummary(r.summary) }));
+  let filtered = parsedRows;
 
   if (filters.resolution_status) {
     const v = filters.resolution_status.toLowerCase();
-    filtered = filtered.filter((r) => {
-      const json = parseSummary(r.summary);
-      const val = (json?.resolution_status as string | null)?.trim();
+    filtered = filtered.filter(({ summary }) => {
+      const val = summary.resolution_status?.trim();
       return v === 'unknown' ? !val : val?.toLowerCase() === v;
     });
   }
 
   if (filters.dissatisfaction_severity) {
     const v = filters.dissatisfaction_severity.toLowerCase();
-    filtered = filtered.filter((r) => {
-      const json = parseSummary(r.summary);
-      const val = (json?.dissatisfaction_severity as string | null)?.trim();
+    filtered = filtered.filter(({ summary }) => {
+      const val = summary.dissatisfaction_severity?.trim();
       return v === 'unknown' ? !val : val?.toLowerCase() === v;
     });
   }
 
   if (filters.language) {
     const v = filters.language.toLowerCase();
-    if (v === 'unknown') {
-      filtered = filtered.filter((r) => {
-        const json = parseSummary(r.summary);
-        const lang = (json?.language as string | null)?.trim();
-        return !lang;
-      });
-    } else {
-      filtered = filtered.filter((r) => {
-        const json = parseSummary(r.summary);
-        return (json?.language as string | null)?.toLowerCase() === v;
-      });
-    }
+    filtered = filtered.filter(({ summary }) => {
+      const lang = summary.language?.trim();
+      return v === 'unknown' ? !lang : lang?.toLowerCase() === v;
+    });
   }
 
   if (filters.issue_category) {
-    const v = filters.issue_category.toLowerCase().trim();
-    const vPrefixMatch = v.match(/^(\d+)\./);
-    const vPrefix = vPrefixMatch ? parseInt(vPrefixMatch[1], 10) : null;
-    filtered = filtered.filter((r) => {
-      const json = parseSummary(r.summary);
-      const results = Array.isArray(json?.results) ? json.results : [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return results.some((x: any) => {
-        const rawCat = (x.category as string | null)?.trim();
-        if (!rawCat) return v === 'unknown';
-        // Normalize "Category N: Foo" → "N. Foo" (mirrors dashboard route)
-        const cat = rawCat.replace(/^category\s+(\d+)[:\s]+/i, '$1. ').trim().toLowerCase();
-        if (cat === v) return true;
-        // Match by numeric prefix so canonical "1. X" also catches DB variant "1. Y"
-        if (vPrefix !== null) {
-          const catPrefixMatch = cat.match(/^(\d+)\./);
-          return catPrefixMatch ? parseInt(catPrefixMatch[1], 10) === vPrefix : false;
-        }
-        return false;
-      });
-    });
+    // Same matcher the dashboard uses for its filteredRows count.
+    const matcher = buildCategoryMatcher([filters.issue_category]);
+    filtered = filtered.filter(({ summary }) => summary.results.some((x) => matcher(x.category)));
   }
 
   if (filters.issue_item) {
-    // Strip leading "N. " so "Account Closure Requests" matches "1. Account Closure Requests".
-    // A trailing 's' is also stripped so singular/plural variants
-    // ("Account Closure Request" vs "Account Closure Requests") are treated as the same issue.
-    const normalize = (s: string) => s.replace(/^\d+\.\s*/, '').trim().toLowerCase().replace(/s$/, '');
-    const v = normalize(filters.issue_item);
-    filtered = filtered.filter((r) => {
-      const json = parseSummary(r.summary);
-      const results = Array.isArray(json?.results) ? json.results : [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      return results.some((x: any) => {
-        const raw = (x.item as string | null) ? normalize(x.item as string) : '';
-        return raw === v;
-      });
-    });
+    const matcher = buildIssueMatcher([filters.issue_item]);
+    filtered = filtered.filter(({ summary }) => summary.results.some((x) => matcher(x.item)));
   }
 
   const total = filtered.length;
   const pageIds = filtered
     .slice(page * perPage, (page + 1) * perPage)
-    .map((r) => r.id);
+    .map(({ row }) => row.id);
 
   if (pageIds.length === 0) return { conversations: [], total };
 

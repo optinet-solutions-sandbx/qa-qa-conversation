@@ -1,24 +1,17 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
-import { cestDateToUnixRange } from '@/lib/intercom';
+import {
+  parseAnalysisSummary,
+  buildCategoryMatcher,
+  buildIssueMatcher,
+  applyConversationDbFilters,
+} from '@/lib/analyticsFilters';
 
-
-function stripFences(text: string): string {
-  return text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '').trim();
-}
-
-function parseSummaryJson(raw: string | null): Record<string, unknown> | null {
-  if (!raw) return null;
-  try {
-    const parsed = JSON.parse(stripFences(raw));
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
-  } catch { /* not JSON */ }
-  return null;
-}
-
-// Normalise "Category 1: Foo" → "1. Foo" so variant AI formats collapse to one entry
-function normalizeCategory(label: string): string {
+// Display helper: strip "Category N: " prefix, preserving original casing so the
+// label still reads nicely in the UI (normalizeCategoryLabel lowercases for
+// matching, which we don't want on display).
+function displayCategory(label: string): string {
   return label.replace(/^category\s+(\d+)[:\s]+/i, '$1. ').trim();
 }
 
@@ -48,26 +41,13 @@ export async function GET(req: NextRequest) {
   const issues         = searchParams.getAll('issue');
 
   try {
-    // ── Build base query filters (dates interpreted in CEST / UTC+2) ────────
-    const cestFromISO = dateFrom ? new Date(cestDateToUnixRange(dateFrom)[0] * 1000).toISOString() : null;
-    const cestToISO   = dateTo   ? new Date(cestDateToUnixRange(dateTo)[1]   * 1000).toISOString() : null;
-
+    // Shared DB-level filter — the exact same helper is used by the drill-down
+    // in lib/db.ts, which is what keeps the overview counts and the drill-down
+    // list counts in lock-step.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const applyFilters = (q: any) => {
-      if (cestFromISO)    q = q.gte('intercom_created_at', cestFromISO);
-      if (cestToISO)      q = q.lte('intercom_created_at', cestToISO);
-      if (brand)          q = q.eq('brand', brand);
-      if (agent)          q = q.eq('agent_name', agent);
-      if (accountManager) {
-        const lower = accountManager.toLowerCase();
-        const amTags = lower === 'softswiss'
-          ? ['group: softswiss🎲', 'group: softswiss dach', 'group: softswiss english', 'group: softswiss']
-          : [`group: vip_${lower}🎲`, `group: non-vip_${lower}🎲`];
-        const quotedTags = amTags.map((t: string) => `"${t}"`).join(',');
-        q = q.or(`account_manager.eq.${accountManager},player_tags.ov.{${quotedTags}}`);
-      }
-      return q;
-    };
+    const applyFilters = (q: any) => applyConversationDbFilters(q, {
+      dateFrom, dateTo, brand, agent, accountManager,
+    });
 
     // ── Overview counts ──────────────────────────────────────────────────
     const [totalRes, analyzedRes, alertRes] = await Promise.all([
@@ -112,20 +92,19 @@ export async function GET(req: NextRequest) {
     };
 
     const parsed: Parsed[] = rows.map((r) => {
-      const json = parseSummaryJson(r.summary as string | null);
-      const results: { category?: string; item?: string }[] = Array.isArray(json?.results) ? json.results as { category?: string; item?: string }[] : [];
+      const summary = parseAnalysisSummary(r.summary as string | null);
       return {
         resolution_status:
           (r.resolution_status as string | null) ??
-          (json?.resolution_status as string | null) ?? null,
+          summary.resolution_status ?? null,
         language:
           (r.language as string | null) ??
-          (json?.language as string | null) ?? null,
+          summary.language ?? null,
         severity:
           (r.dissatisfaction_severity as string | null) ??
-          (json?.dissatisfaction_severity as string | null) ?? null,
-        categories: results.map((x) => normalizeCategory(x.category ?? 'Unknown')),
-        items: results.map((x) => ({ category: normalizeCategory(x.category ?? 'Unknown'), item: x.item ?? 'Unknown' })),
+          summary.dissatisfaction_severity ?? null,
+        categories: summary.results.map((x) => displayCategory(x.category ?? 'Unknown')),
+        items: summary.results.map((x) => ({ category: displayCategory(x.category ?? 'Unknown'), item: x.item ?? 'Unknown' })),
       };
     });
 
@@ -222,25 +201,21 @@ export async function GET(req: NextRequest) {
       })
       .filter(({ items }) => items.length > 0);
 
-    // ── Filter by category (in-memory, since categories live in summary JSON) ──
-    // Match by exact key OR by numeric prefix so that selecting a canonical like
-    // "1. Account Closure & Self-Exclusion Requests" also catches DB variants
-    // like "1. Account Closure Requests" that share prefix 1.
-    const categoryKeys = categories.map((c) => c.toLowerCase().trim());
-    const categoryPrefixes = new Set(categoryKeys.map((k) => numPrefix(k)).filter((p) => p !== 999));
-    const matchesCategory = (c: string) => {
-      const ck = c.toLowerCase().trim();
-      return categoryKeys.includes(ck) || categoryPrefixes.has(numPrefix(ck));
-    };
+    // ── Filter rows by category / issue (shared logic with drill-down) ────────
+    // buildCategoryMatcher matches by exact key OR by numeric prefix — selecting
+    // the canonical "1. Account Closure & Self-Exclusion Requests" also catches
+    // AI variants like "1. Self-Exclusion Requests" that share the "1." prefix.
+    // buildIssueMatcher normalises singular/plural, so both "Account Closure
+    // Request" and "Account Closure Requests" collapse to the same key.
+    const matchesCategory = buildCategoryMatcher(categories);
+    const matchesIssue    = buildIssueMatcher(issues);
+    const hasCategoryFilter = categories.length > 0;
+    const hasIssueFilter    = issues.length > 0;
 
-    // ── Filter by issue item (strip "N. " prefix before comparing) ────────────
-    const issueKeys = issues.map((i) => normalizeIssueKey(stripItemNum(i)));
-    const matchesIssue = (item: string) => issueKeys.includes(normalizeIssueKey(stripItemNum(item)));
+    let filteredRows   = hasCategoryFilter ? rows.filter((_, i) => parsed[i].categories.some((c) => matchesCategory(c))) : rows;
+    let filteredParsed = hasCategoryFilter ? parsed.filter((p)  => p.categories.some((c) => matchesCategory(c))) : parsed;
 
-    let filteredRows   = categoryKeys.length > 0 ? rows.filter((_, i) => parsed[i].categories.some((c) => matchesCategory(c))) : rows;
-    let filteredParsed = categoryKeys.length > 0 ? parsed.filter((p)  => p.categories.some((c) => matchesCategory(c))) : parsed;
-
-    if (issueKeys.length > 0) {
+    if (hasIssueFilter) {
       const keep = filteredParsed.map((p) => p.items.some((x) => matchesIssue(x.item)));
       filteredRows   = filteredRows.filter((_, i) => keep[i]);
       filteredParsed = filteredParsed.filter((_, i) => keep[i]);
@@ -300,7 +275,7 @@ export async function GET(req: NextRequest) {
     // When a category filter is active we can't use the DB RPC (it has no category
     // param), so we group the already-filtered in-memory rows by CEST date instead.
     let conversationsByDate: { date: string; count: number }[];
-    if (categoryKeys.length > 0 || issueKeys.length > 0) {
+    if (hasCategoryFilter || hasIssueFilter) {
       const dateCounts: Record<string, number> = {};
       for (const r of filteredRows) {
         const iso = r.intercom_created_at as string | null;
@@ -312,11 +287,21 @@ export async function GET(req: NextRequest) {
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([date, count]) => ({ date, count }));
     } else {
+      // Bare ISO-day bounds for the RPC — it accepts nullable ISO timestamps and
+      // interprets them as inclusive UTC day starts/ends, matching the semantics
+      // applyConversationDbFilters uses for the gte/lt pair.
+      const rpcFromISO = dateFrom ? new Date(dateFrom).toISOString() : null;
+      const rpcToISO   = dateTo   ? (() => {
+        const end = new Date(dateTo);
+        end.setUTCDate(end.getUTCDate() + 1);
+        end.setUTCMilliseconds(-1);
+        return end.toISOString();
+      })() : null;
       const { data: dateAgg } = await supabase.rpc('get_conversations_by_cest_date', {
-        p_date_from: cestFromISO ?? null,
-        p_date_to:   cestToISO   ?? null,
-        p_brand:     brand       ?? null,
-        p_agent:     agent       ?? null,
+        p_date_from: rpcFromISO,
+        p_date_to:   rpcToISO,
+        p_brand:     brand ?? null,
+        p_agent:     agent ?? null,
       }) as { data: Array<{ cest_date: string; conversation_count: number }> | null };
       conversationsByDate = (dateAgg ?? []).map((r) => ({
         date:  r.cest_date,
@@ -359,7 +344,7 @@ export async function GET(req: NextRequest) {
     // When a category filter is active, the DB-level counts are global (the RPC
     // has no category param).  Use the in-memory filtered counts instead so the
     // stat cards reflect what the charts show.
-    const hasInMemoryFilter = categoryKeys.length > 0 || issueKeys.length > 0;
+    const hasInMemoryFilter = hasCategoryFilter || hasIssueFilter;
     const overviewAnalyzed  = hasInMemoryFilter ? filteredRows.length  : analyzed;
     const overviewAlertWorthy = hasInMemoryFilter
       ? filteredRows.filter((r) => r.is_alert_worthy).length
