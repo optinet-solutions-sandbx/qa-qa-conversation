@@ -286,17 +286,27 @@ export async function GET(req: NextRequest) {
       .map(({ label, count }) => ({ label, count }));
 
     // ── Top issue items ──────────────────────────────────────────────────
+    // Strip leading "N. " and normalize singular/plural so duplicates like
+    // "1. Account Closure Requests" / "Account Closure Requests" /
+    // "Account Closure Request" collapse into a single row. Display the
+    // most frequent de-numbered variant.
     const allItems = filteredParsed.flatMap((p) => p.items);
-    const itemMap: Record<string, { count: number; label: string; category: string }> = {};
+    const itemAgg: Record<string, { count: number; category: string; labelCounts: Record<string, number> }> = {};
     for (const { item, category } of allItems) {
-      const key = item.toLowerCase().trim();
-      if (!itemMap[key]) itemMap[key] = { count: 0, label: item, category };
-      itemMap[key].count++;
+      const clean = stripItemNum(item);
+      if (!clean) continue;
+      const key = normalizeIssueKey(clean);
+      if (!itemAgg[key]) itemAgg[key] = { count: 0, category, labelCounts: {} };
+      itemAgg[key].count++;
+      itemAgg[key].labelCounts[clean] = (itemAgg[key].labelCounts[clean] ?? 0) + 1;
     }
-    const topItems = Object.values(itemMap)
+    const topItems = Object.values(itemAgg)
       .sort((a, b) => b.count - a.count)
       .slice(0, 10)
-      .map(({ label, count, category }) => ({ label, count, category }));
+      .map(({ count, category, labelCounts }) => {
+        const [label] = Object.entries(labelCounts).sort((a, b) => b[1] - a[1])[0];
+        return { label, count, category };
+      });
 
     // ── Brand breakdown ──────────────────────────────────────────────────
     const brandBreakdown = countBy(

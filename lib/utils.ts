@@ -169,13 +169,16 @@ export function parseSummaryForTable(raw: string | null): { category: string | n
       null;
     const category = rawCat ? rawCat.replace(/^category\s+(\d+)[:\s]+/i, '$1. ').trim() : null;
 
-    // Issue: prefer results[0].item, fall back to top-level issue keys
-    const issue =
+    // Issue: prefer results[0].item, fall back to top-level issue keys.
+    // Strip leading "N. " so variants like "1. Account Closure Requests"
+    // and "Account Closure Requests" render identically in the UI.
+    const rawIssue =
       first?.item ??
       (typeof json.issue === 'string' ? json.issue : null) ??
       (typeof json.item === 'string' ? json.item : null) ??
       (typeof json.issue_item === 'string' ? json.issue_item : null) ??
       null;
+    const issue = rawIssue ? rawIssue.replace(/^\d+\.\s*/, '').trim() || null : null;
 
     // Summary: json.summary is the canonical key; also try common alternatives
     const summary =
