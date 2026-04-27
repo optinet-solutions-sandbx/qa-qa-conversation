@@ -41,12 +41,21 @@ type Stats = {
   skipped_no_raw_messages: number;
   refetched: number;
   refetch_errors: number;
+  hit_max_rows: boolean;
+  hit_time_budget: boolean;
 };
 
-async function backfillAll(
-  options: { clearSummaries: boolean; refetchEmpty: boolean; dryRun: boolean; batchSize: number },
-  apiKey: string | undefined,
-): Promise<Stats> {
+type Options = {
+  clearSummaries: boolean;
+  refetchEmpty: boolean;
+  dryRun: boolean;
+  batchSize: number;
+  onlyEmpty: boolean;
+  maxRows: number | null;
+  timeBudgetMs: number;
+};
+
+async function backfillAll(options: Options, apiKey: string | undefined): Promise<Stats> {
   const stats: Stats = {
     scanned: 0,
     changed: 0,
@@ -54,19 +63,33 @@ async function backfillAll(
     skipped_no_raw_messages: 0,
     refetched: 0,
     refetch_errors: 0,
+    hit_max_rows: false,
+    hit_time_budget: false,
   };
 
+  const startedAt = Date.now();
   let from = 0;
-  while (true) {
-    const { data, error } = await supabase
+  outer: while (true) {
+    let query = supabase
       .from('conversations')
       .select('id, intercom_id, original_text, raw_messages, summary')
       .order('intercom_created_at', { ascending: true })
       .range(from, from + options.batchSize - 1);
+    if (options.onlyEmpty) query = query.is('raw_messages', null);
+
+    const { data, error } = await query;
     if (error) throw new Error(`[backfill-transcripts] fetch: ${error.message}`);
     if (!data || data.length === 0) break;
 
     for (const row of data as RowSlice[]) {
+      if (options.maxRows !== null && stats.scanned >= options.maxRows) {
+        stats.hit_max_rows = true;
+        break outer;
+      }
+      if (Date.now() - startedAt > options.timeBudgetMs) {
+        stats.hit_time_budget = true;
+        break outer;
+      }
       stats.scanned++;
 
       let raw = row.raw_messages;
@@ -117,7 +140,10 @@ async function backfillAll(
     }
 
     if (data.length < options.batchSize) break;
-    from += options.batchSize;
+    // When onlyEmpty=true we filter at query time, so processed rows drop out
+    // of the result set on the next page. Keep `from` at 0 so we don't skip
+    // unprocessed rows.
+    if (!options.onlyEmpty) from += options.batchSize;
   }
 
   return stats;
@@ -130,10 +156,14 @@ function authHeaderOk(req: NextRequest): boolean {
 }
 
 // POST /api/admin/backfill-transcripts
-//   body: { clearSummaries?, refetchEmpty?, dryRun?, batchSize?, background? }
-// background=true returns immediately and runs in waitUntil — recommended for
-// the full 26k+ pass since one HTTP call can exceed maxDuration. Otherwise the
-// response includes the stats once finished.
+//   body: {
+//     clearSummaries?, refetchEmpty?, dryRun?, batchSize?, background?,
+//     onlyEmpty?,        // filter to rows where raw_messages IS NULL — pair with refetchEmpty for the slow Intercom-bound pass
+//     maxRows?,          // cap rows scanned per call (chunked refetch). null = unlimited
+//     timeBudgetSec?,    // bail out before this many seconds elapse (default 240, must stay under maxDuration=300)
+//   }
+// background=true returns immediately and runs in waitUntil. For chunked
+// refetches call repeatedly with onlyEmpty=true,refetchEmpty=true,maxRows=N.
 export async function POST(req: NextRequest) {
   if (!authHeaderOk(req)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
@@ -143,15 +173,21 @@ export async function POST(req: NextRequest) {
     dryRun?: boolean;
     batchSize?: number;
     background?: boolean;
+    onlyEmpty?: boolean;
+    maxRows?: number | null;
+    timeBudgetSec?: number;
   };
   try { body = await req.json(); }
   catch { body = {}; }
 
-  const opts = {
+  const opts: Options = {
     clearSummaries: body.clearSummaries ?? false,
     refetchEmpty: body.refetchEmpty ?? false,
     dryRun: body.dryRun ?? false,
     batchSize: Math.max(50, Math.min(2000, body.batchSize ?? 500)),
+    onlyEmpty: body.onlyEmpty ?? false,
+    maxRows: body.maxRows ?? null,
+    timeBudgetMs: Math.max(10, Math.min(290, body.timeBudgetSec ?? 240)) * 1000,
   };
   const apiKey = process.env.INTERCOM_API_KEY;
   if (opts.refetchEmpty && !apiKey) {
