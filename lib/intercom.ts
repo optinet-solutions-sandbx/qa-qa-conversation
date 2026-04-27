@@ -89,6 +89,27 @@ export function stripHtml(html: string): string {
   return (html || '').replace(/<[^>]*>?/gm, '').trim();
 }
 
+// Single source of truth for the speaker label sent to the QA model.
+// Keep in sync with the parser in components/conversations/ConversationDetail.tsx.
+export function authorTypeToLabel(authorType: string | null | undefined): 'Agent' | 'Bot' | 'Player' {
+  if (authorType === 'admin') return 'Agent';
+  if (authorType === 'bot' || authorType === 'operator') return 'Bot';
+  return 'Player';
+}
+
+export function formatTranscriptFromRawMessages(messages: RawMessage[]): string {
+  return messages
+    .map((m) => `${authorTypeToLabel(m.author_type)}: ${m.body}`)
+    .join('\n\n');
+}
+
+const MAX_TRANSCRIPT_CHARS = 60000;
+export function truncateTranscript(transcript: string): string {
+  return transcript.length > MAX_TRANSCRIPT_CHARS
+    ? transcript.substring(0, MAX_TRANSCRIPT_CHARS) + '\n\n[Transcript truncated]'
+    : transcript;
+}
+
 export function tsToIso(ts: number | null | undefined): string | null {
   return ts ? new Date(ts * 1000).toISOString() : null;
 }
@@ -232,20 +253,9 @@ export async function fetchIntercomData(
     body: stripHtml(p.body),
     created_at: tsToIso(p.created_at),
   }));
-  const transcript = commentParts
-    .map((p) => {
-      let label: string;
-      if (p.author.type === 'admin') label = 'Agent';
-      else if (p.author.type === 'bot' || p.author.type === 'operator') label = 'Bot';
-      else label = 'Player';
-      return `${label}: ${stripHtml(p.body)}`;
-    })
-    .join('\n\n');
+  const transcript = formatTranscriptFromRawMessages(rawMessages);
   if (!transcript.trim()) throw new Error('No readable transcript in this conversation.');
-  const MAX_CHARS = 60000;
-  const truncated = transcript.length > MAX_CHARS
-    ? transcript.substring(0, MAX_CHARS) + '\n\n[Transcript truncated]'
-    : transcript;
+  const truncated = truncateTranscript(transcript);
 
   let contact: IntercomContact | null = null;
   let playerTags: string[] = [];

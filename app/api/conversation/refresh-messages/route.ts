@@ -16,9 +16,11 @@ export async function POST(req: NextRequest) {
 
   try {
     const data = await fetchIntercomData(intercomId, apiKey);
+    // Update raw_messages AND original_text together so the QA-bound transcript
+    // never drifts from the per-message labels rendered in the UI.
     const { error } = await supabase
       .from('conversations')
-      .update({ raw_messages: data.raw_messages })
+      .update({ raw_messages: data.raw_messages, original_text: data.transcript })
       .eq('intercom_id', intercomId);
     if (error) throw new Error(error.message);
     return NextResponse.json({ raw_messages: data.raw_messages });
