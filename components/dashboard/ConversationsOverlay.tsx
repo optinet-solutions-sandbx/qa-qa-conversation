@@ -208,7 +208,7 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                             href={getBacklinkFull(conv)!}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[11px] font-semibold text-sky-600 hover:text-sky-800 hover:underline"
+                            className="text-[11px] font-semibold text-red-600 hover:text-red-800 hover:underline"
                           >
                             Account
                           </a>
