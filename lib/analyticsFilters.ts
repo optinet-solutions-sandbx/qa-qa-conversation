@@ -3,6 +3,8 @@
 // normalisation / matching functions is what guarantees the dashboard's counts
 // match the drill-down lists one-to-one.  Do not inline these rules elsewhere.
 
+import { getAmGroupsForFilter } from './utils';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabaseQuery = any;
 
@@ -209,10 +211,12 @@ export function applyConversationDbFilters(q: AnySupabaseQuery, f: DbFilterInput
   }
   if (f.accountManager) {
     const am = f.accountManager;
-    const lower = am.toLowerCase();
-    const amTags = lower === 'softswiss'
+    // Map AM display name → owned groups via GROUP_TO_AM so VIP/NON-VIP halves
+    // that resolve to different AMs (e.g. vip_koko=Koko, non-vip_koko=Geri/Nik)
+    // don't bleed into each other's results.
+    const amTags = am.toLowerCase() === 'softswiss'
       ? ['group: softswiss🎲', 'group: softswiss dach', 'group: softswiss english', 'group: softswiss']
-      : [`group: vip_${lower}🎲`, `group: non-vip_${lower}🎲`];
+      : getAmGroupsForFilter(am).map((g) => `group: ${g}🎲`);
     const quotedTags = amTags.map((t) => `"${t}"`).join(',');
     q = q.or(`account_manager.eq.${am},player_tags.ov.{${quotedTags}}`);
   }
