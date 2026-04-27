@@ -67,6 +67,28 @@ export const GROUP_TO_AM: Record<string, string> = {
 export const AM_NAMES = ['Nik', 'Christian', 'Niklas', 'Salvatore', 'Stefano', 'Esam', 'Yassine', 'Koko', 'Geri/Nik', 'SoftSwiss'] as const;
 export type AmName = typeof AM_NAMES[number];
 
+// ── VIP Level group mapping ──────────────────────────────────────────────────
+// Intercom level groups follow the pattern "L<N>: <description>", e.g.
+//   "group: L0: RND Players"
+//   "group: L1: €1–2K LT, 0 (30d)"
+//   "group: L7: €2K–4.9K (30d)"
+//   "group: L10: 30K LT (≥€500 in 45d)"
+// After normalizeGroupName these become "l0: rnd players", "l1: 12k lt, 0 (30d)",
+// "l7: 2k4.9k (30d)", "l10: 30k lt (500 in 45d)" respectively.  Detecting the
+// "l<N>:" prefix is what catches every level uniformly without us having to
+// keep an exact-suffix map in sync with Intercom wording changes.
+const LEVEL_PREFIX_RE = /^l(\d+)\s*:/;
+
+export function levelFromGroup(normalized: string): number | null {
+  const m = normalized.match(LEVEL_PREFIX_RE);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return n >= 0 && n <= 10 ? n : null;
+}
+
+export const VIP_LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4', 'L5', 'L6', 'L7', 'L8', 'L9', 'L10'] as const;
+export type VipLevel = typeof VIP_LEVELS[number];
+
 // Strips "group: " prefix, emoji / non-ASCII chars (e.g. 🎲), whitespace, and lowercases.
 // Handles Intercom tag formats: "group: VIP_Ada", "group: vip_ada🎲", "group: softswiss dach", etc.
 export function normalizeGroupName(g: string): string {
@@ -108,11 +130,59 @@ export function getSegment(conv: Conversation): 'VIP' | 'NON-VIP' | 'SoftSwiss' 
   return null;
 }
 
-export function getVipLevel(conv: Conversation): string | null {
-  return getCustomAttr(
+// Inputs needed to derive a player's VIP level — structural so callers can pass
+// slim row objects (dashboard analytics, drill-down filter) without having to
+// construct a full Conversation.  player_companies only needs `.name` here, so
+// this accepts both full PlayerCompany[] and the slim `{ name: string }[]`
+// shape selected from the dashboard query.
+type VipLevelInput = Pick<Conversation, 'player_tags' | 'player_segments' | 'tags' | 'player_custom_attributes'> & {
+  player_companies?: { name: string }[] | null;
+};
+
+// Returns the player's VIP level as an integer 0-10, or null if no level group
+// matches.  When the player belongs to multiple level groups, the highest wins
+// (e.g. a player tagged both L4 and L6 is treated as L6).  Custom-attribute
+// fallback covers legacy rows where an explicit "VIP Level" attribute is set.
+export function getVipLevelNum(conv: VipLevelInput): number | null {
+  const companyNames = (conv.player_companies ?? []).map((c) => c.name);
+  const allGroups = [
+    ...(conv.player_tags ?? []),
+    ...(conv.player_segments ?? []),
+    ...(conv.tags ?? []),
+    ...companyNames,
+  ];
+  let best: number | null = null;
+  for (const g of allGroups) {
+    const lvl = levelFromGroup(normalizeGroupName(g));
+    if (lvl == null) continue;
+    if (best == null || lvl > best) best = lvl;
+  }
+  if (best != null) return best;
+  // Fallback: explicit custom attribute like "L7" or "Level 7" or "7"
+  const raw = getCustomAttr(
     conv.player_custom_attributes,
     'VIP Level', 'vip_level', 'VIPLevel', 'Player Level', 'player_level', 'Level',
   );
+  if (!raw) return null;
+  const m = raw.match(/(\d+)/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return n >= 0 && n <= 10 ? n : null;
+}
+
+export function getVipLevel(conv: VipLevelInput): string | null {
+  const n = getVipLevelNum(conv);
+  return n == null ? null : `L${n}`;
+}
+
+// Parses a filter value like "L7" or "7" or "Level 7" to its numeric form.
+// Returns null for values that aren't 0-10.
+export function parseVipLevelFilter(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const m = String(raw).match(/(\d+)/);
+  if (!m) return null;
+  const n = parseInt(m[1], 10);
+  return n >= 0 && n <= 10 ? n : null;
 }
 
 export function getAccountManager(conv: Conversation): string | null {

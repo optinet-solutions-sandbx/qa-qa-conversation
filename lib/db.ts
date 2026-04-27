@@ -8,6 +8,7 @@ import {
   applyConversationDbFilters,
   normalizeSeverity,
 } from './analyticsFilters';
+import { getVipLevelNum, parseVipLevelFilter } from './utils';
 
 // ── Shared row mapper ──────────────────────────────────────────────────────
 
@@ -425,15 +426,21 @@ export interface ConversationFilters {
   brand?: string;
   agent_name?: string;
   account_manager?: string;
+  vip_level?: string;
   dateFrom?: string;
   dateTo?: string;
   analyzed?: boolean;
   alert_worthy?: boolean;
 }
 
+// vip_level isn't stored as a column — it's derived from player_tags /
+// player_segments / player_companies, so it has to be filtered in-memory the
+// same way the JSON-summary filters are. Routing it through the JSON-filter
+// path is what keeps that filtering off the simple loadConversations path.
 export function needsJsonFilter(filters: ConversationFilters): boolean {
   return !!(filters.resolution_status || filters.dissatisfaction_severity ||
-            filters.issue_category    || filters.issue_item || filters.language);
+            filters.issue_category    || filters.issue_item || filters.language ||
+            filters.vip_level);
 }
 
 export async function loadConversations(
@@ -506,11 +513,24 @@ export async function loadConversationsWithJsonFilter(
   const DB_PAGE = 1000;
 
   // ── Step 1: fetch only id + summary (lightweight) ──────────────────────
-  type Slim = { id: string; summary: string | null };
+  // When a vip_level filter is active we also pull the group/attribute fields
+  // needed by getVipLevelNum so we can match in-memory below.
+  type Slim = {
+    id: string;
+    summary: string | null;
+    player_tags?: string[] | null;
+    player_segments?: string[] | null;
+    player_companies?: { name: string }[] | null;
+    tags?: string[] | null;
+    player_custom_attributes?: Record<string, unknown> | null;
+  };
+  const slimFields = filters.vip_level
+    ? 'id, summary, player_tags, player_segments, player_companies, tags, player_custom_attributes'
+    : 'id, summary';
   const slimById = new Map<string, Slim>();
   let offset = 0;
   while (true) {
-    const { data, error } = await buildJsonFilterBaseQuery('id, summary', filters)
+    const { data, error } = await buildJsonFilterBaseQuery(slimFields, filters)
       .range(offset, offset + DB_PAGE - 1);
     if (error) throw new Error(`[db] loadConversationsWithJsonFilter (slim): ${error.message}`);
     if (!data || data.length === 0) break;
@@ -569,6 +589,24 @@ export async function loadConversationsWithJsonFilter(
   if (filters.issue_item) {
     const matcher = buildIssueMatcher([filters.issue_item]);
     filtered = filtered.filter(({ summary }) => summary.results.some((x) => matcher(x.item)));
+  }
+
+  if (filters.vip_level) {
+    // The user's "highest level wins" rule lives inside getVipLevelNum, so
+    // equality against the parsed filter value is the right semantics here:
+    // a player tagged both L4 and L6 only matches when filtering for L6.
+    const target = parseVipLevelFilter(filters.vip_level);
+    if (target != null) {
+      filtered = filtered.filter(({ row }) => getVipLevelNum({
+        player_tags:              row.player_tags ?? [],
+        player_segments:          row.player_segments ?? [],
+        player_companies:         row.player_companies ?? [],
+        tags:                     row.tags ?? [],
+        player_custom_attributes: row.player_custom_attributes ?? null,
+      }) === target);
+    } else {
+      filtered = [];
+    }
   }
 
   const total = filtered.length;

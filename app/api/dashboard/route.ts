@@ -8,6 +8,7 @@ import {
   applyConversationDbFilters,
   normalizeSeverity,
 } from '@/lib/analyticsFilters';
+import { getVipLevelNum, parseVipLevelFilter } from '@/lib/utils';
 
 // Display helper: strip "Category N: " prefix, preserving original casing so the
 // label still reads nicely in the UI (normalizeCategoryLabel lowercases for
@@ -42,6 +43,7 @@ export async function GET(req: NextRequest) {
   const issues         = searchParams.getAll('issue');
   const severity       = searchParams.get('severity');
   const language       = searchParams.get('language');
+  const vipLevel       = searchParams.get('vipLevel');
 
   try {
     // Shared DB-level filter — the exact same helper is used by the drill-down
@@ -76,7 +78,7 @@ export async function GET(req: NextRequest) {
       const { data: page } = await applyFilters(
         supabase
           .from('conversations')
-          .select('id, summary, brand, agent_name, is_alert_worthy, intercom_created_at, language, resolution_status, dissatisfaction_severity')
+          .select('id, summary, brand, agent_name, is_alert_worthy, intercom_created_at, language, resolution_status, dissatisfaction_severity, player_tags, player_segments, player_companies, tags, player_custom_attributes')
           .not('summary', 'is', null)
           .order('intercom_created_at', { ascending: false })
           .order('id', { ascending: false })
@@ -106,6 +108,7 @@ export async function GET(req: NextRequest) {
       resolution_status: string | null;
       language: string | null;
       severity: string | null;
+      vip_level: number | null;
       categories: string[];
       items: { category: string; item: string }[];
     };
@@ -122,6 +125,13 @@ export async function GET(req: NextRequest) {
         severity:
           (r.dissatisfaction_severity as string | null) ??
           summary.dissatisfaction_severity ?? null,
+        vip_level: getVipLevelNum({
+          player_tags:              (r.player_tags as string[] | null) ?? [],
+          player_segments:          (r.player_segments as string[] | null) ?? [],
+          player_companies:         (r.player_companies as { name: string }[] | null) ?? [],
+          tags:                     (r.tags as string[] | null) ?? [],
+          player_custom_attributes: (r.player_custom_attributes as Record<string, unknown> | null) ?? null,
+        }),
         categories: summary.results.map((x) => displayCategory(x.category ?? 'Unknown')),
         items: summary.results.map((x) => ({ category: displayCategory(x.category ?? 'Unknown'), item: x.item ?? 'Unknown' })),
       };
@@ -259,6 +269,16 @@ export async function GET(req: NextRequest) {
       filteredParsed = filteredParsed.filter((_, i) => keep[i]);
     }
 
+    // VIP level: equality match against the precomputed (highest-wins) level so
+    // a player tagged both L4 and L6 only appears under the L6 filter.
+    const hasVipLevelFilter = !!vipLevel;
+    if (hasVipLevelFilter) {
+      const target = parseVipLevelFilter(vipLevel);
+      const keep = filteredParsed.map((p) => target != null && p.vip_level === target);
+      filteredRows   = filteredRows.filter((_, i) => keep[i]);
+      filteredParsed = filteredParsed.filter((_, i) => keep[i]);
+    }
+
     // ── Resolution breakdown ─────────────────────────────────────────────
     const resolutionBreakdown = countBy(filteredParsed, (p) => p.resolution_status);
 
@@ -336,7 +356,7 @@ export async function GET(req: NextRequest) {
     // When a category filter is active we can't use the DB RPC (it has no category
     // param), so we group the already-filtered in-memory rows by CEST date instead.
     let conversationsByDate: { date: string; count: number }[];
-    if (hasCategoryFilter || hasIssueFilter || hasSeverityFilter || hasLanguageFilter) {
+    if (hasCategoryFilter || hasIssueFilter || hasSeverityFilter || hasLanguageFilter || hasVipLevelFilter) {
       const dateCounts: Record<string, number> = {};
       for (const r of filteredRows) {
         const iso = r.intercom_created_at as string | null;
@@ -419,7 +439,7 @@ export async function GET(req: NextRequest) {
     // When a category filter is active, the DB-level counts are global (the RPC
     // has no category param).  Use the in-memory filtered counts instead so the
     // stat cards reflect what the charts show.
-    const hasInMemoryFilter = hasCategoryFilter || hasIssueFilter || hasSeverityFilter || hasLanguageFilter;
+    const hasInMemoryFilter = hasCategoryFilter || hasIssueFilter || hasSeverityFilter || hasLanguageFilter || hasVipLevelFilter;
     const overviewAnalyzed  = hasInMemoryFilter ? filteredRows.length  : analyzed;
     const overviewAlertWorthy = hasInMemoryFilter
       ? filteredRows.filter((r) => r.is_alert_worthy).length

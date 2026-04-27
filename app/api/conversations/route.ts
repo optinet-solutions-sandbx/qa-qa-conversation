@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
   if (sp.get('brand'))                    filters.brand                    = sp.get('brand')!;
   if (sp.get('agent_name'))               filters.agent_name               = sp.get('agent_name')!;
   if (sp.get('account_manager'))          filters.account_manager          = sp.get('account_manager')!;
+  if (sp.get('vip_level'))                filters.vip_level                = sp.get('vip_level')!;
   if (sp.get('dateFrom'))                 filters.dateFrom                 = sp.get('dateFrom')!;
   if (sp.get('dateTo'))                   filters.dateTo                   = sp.get('dateTo')!;
   if (sp.get('analyzed') !== null && sp.get('analyzed') !== '')
