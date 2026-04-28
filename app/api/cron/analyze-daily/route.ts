@@ -9,7 +9,6 @@ import {
   dbInsertBatchJob,
   dbUpdateAnalysisFields,
   dbInsertAnalysisRun,
-  type MinimalConversation,
 } from '@/lib/db';
 import type { BatchJob, BatchJobStatus, AnalysisRun } from '@/lib/types';
 import { generateId } from '@/lib/utils';
@@ -304,20 +303,15 @@ export async function GET(req: NextRequest) {
         if (!prompt) {
           console.warn('[cron] analyze-daily step B: no active prompt found');
         } else {
-          // Fetch all unanalyzed conversations in pages
-          const PAGE_SIZE = 10_000;
-          const allConversations: MinimalConversation[] = [];
-          let offset = 0;
-          while (offset < totalUnanalyzed) {
-            const page = await getUnanalyzedConversationsPage(offset, PAGE_SIZE);
-            if (page.length === 0) break;
-            allConversations.push(...page);
-            offset += page.length;
-          }
-
-          const lines = allConversations.map((c) => buildJsonlLine(c, prompt.content));
+          // Only load enough rows for the 1 chunk we'll actually submit this
+          // run. Loading all 25k+ unanalyzed into memory just to slice 500 of
+          // them was OOM'ing the function (each row carries up to 60KB of
+          // original_text, ~500MB total at scale → 500s).
+          const targetRows = MAX_REQUESTS_PER_CHUNK * MAX_CHUNKS_PER_RUN;
+          const page = await getUnanalyzedConversationsPage(0, targetRows);
+          const lines = page.map((c) => buildJsonlLine(c, prompt.content));
           const chunks = chunkLines(lines);
-          const totalChunks = chunks.length;
+          const totalChunks = Math.ceil(totalUnanalyzed / MAX_REQUESTS_PER_CHUNK);
           const now = new Date().toISOString();
 
           for (let i = 0; i < chunks.length && newBatchJobs < MAX_CHUNKS_PER_RUN; i++) {
