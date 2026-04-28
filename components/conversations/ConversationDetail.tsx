@@ -678,6 +678,7 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
       {chatMessages.map((msg, i) => {
         const isAgent = msg.author_type === 'admin';
         const isBot   = msg.author_type === 'bot' || msg.author_type === 'operator';
+        const icon    = isAgent ? '🎧' : isBot ? '🤖' : '👤';
         const label   = isAgent ? 'Agent' : isBot ? 'Bot' : 'Player';
         const time    = fmtMsgTime(msg.created_at);
         const gap     = i > 0 ? fmtGap(chatMessages[i - 1].created_at, msg.created_at) : null;
@@ -697,7 +698,7 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
             )}
             <div className={`flex flex-col gap-1 ${isAgent ? 'items-end' : 'items-start'}`}>
               <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-400 px-1 flex items-center gap-1.5">
-                <span>{label}{isAgent && conv.agent_name ? ` · ${conv.agent_name}` : ''}</span>
+                <span><span className="text-[12px] mr-1 normal-case tracking-normal">{icon}</span>{label}{isAgent && conv.agent_name ? ` · ${conv.agent_name}` : ''}</span>
                 {time && (
                   <span className="text-[11px] font-semibold normal-case tracking-normal text-slate-700 tabular-nums">
                     {time}
@@ -712,10 +713,10 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
               <div
                 className={`max-w-[82%] px-3.5 py-2.5 rounded-2xl text-xs leading-relaxed break-words whitespace-pre-wrap
                   ${isAgent
-                    ? 'bg-[#1b3a5c] text-white rounded-tr-sm'
+                    ? 'bg-[#DFF5E3] text-[#1B5E20] rounded-tr-sm border border-[#BFE6C5]'
                     : isBot
-                      ? 'bg-white text-slate-800 rounded-tl-sm border border-slate-200 shadow-sm'
-                      : 'bg-slate-300 text-slate-800 rounded-tl-sm border border-slate-400'
+                      ? 'bg-[#F1F3F5] text-[#333] rounded-tl-sm border border-slate-200'
+                      : 'bg-[#DCEBFF] text-[#0B3D91] rounded-tl-sm border border-[#B8D6F5]'
                   }`}
               >
                 {displayBody}
