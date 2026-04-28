@@ -67,6 +67,19 @@ async function backfillAll(options: Options, apiKey: string | undefined): Promis
     hit_time_budget: false,
   };
 
+  // Pure-count fast path: dryRun + onlyEmpty just wants the NULL-count, not
+  // a row-by-row scan. Counting the rows directly is O(1) for the DB and
+  // avoids the offset-stuck pagination that inflated previous probes.
+  if (options.dryRun && options.onlyEmpty) {
+    const { count, error } = await supabase
+      .from('conversations')
+      .select('id', { count: 'exact', head: true })
+      .is('raw_messages', null);
+    if (error) throw new Error(`[backfill-transcripts] count: ${error.message}`);
+    stats.scanned = count ?? 0;
+    return stats;
+  }
+
   const startedAt = Date.now();
   let from = 0;
   outer: while (true) {
