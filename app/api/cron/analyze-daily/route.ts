@@ -17,10 +17,10 @@ import { generateId } from '@/lib/utils';
 export const maxDuration = 300;
 
 // ── Constants ──────────────────────────────────────────────────────────────
-// 500 keeps us safely under OpenAI's 2M enqueued-token cap on gpt-4o-mini
-// (Tier 1). Enqueued tokens = input_tokens + max_tokens per request; with
-// input ~1.5–2k and max_tokens 2048, that's ~3.5–4k/request → 500 ≈ 1.75–2M.
-// 2,500 was too aggressive once post-backfill transcripts grew.
+// Chunk size of 500 was originally tuned for gpt-4o-mini Tier 1 (2M enqueued-
+// token cap). When switching models or tiers, re-check OpenAI's per-org
+// enqueued-token limit and adjust: if a batch fails with
+// token_limit_exceeded, drop this further.
 const MAX_REQUESTS_PER_CHUNK = 500;
 const MAX_FILE_BYTES = 90 * 1024 * 1024;
 // Only submit 1 batch per cron run to stay under the enqueued-token org limit.
@@ -68,7 +68,7 @@ function buildJsonlLine(conv: {
     method: 'POST',
     url: '/v1/chat/completions',
     body: {
-      model: 'gpt-4o-mini',
+      model: 'gpt-5-mini',
       messages: [
         { role: 'system', content: promptContent },
         { role: 'user', content: buildUserMessage(conv) },

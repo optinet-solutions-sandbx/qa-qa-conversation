@@ -21,17 +21,16 @@ export const maxDuration = 300;
 
 // ── Rate-limit / size guards ───────────────────────────────────────────────
 // OpenAI Batch API limits: 50k requests per file, 100 MB per file.
-// Chunk size kept at 500 to stay safely under the 2M enqueued-token org limit
-// on gpt-4o-mini (Tier 1). OpenAI's accounting is roughly input_tokens +
-// max_tokens per request; with input ~1.5–2k and max_tokens 2048, that's
-// ~3.5–4k/request → 500 ≈ 1.75–2M, just under the cap. 2,500 + post-backfill
-// (longer) transcripts started failing with token_limit_exceeded.
+// Chunk size of 500 was originally tuned for gpt-4o-mini Tier 1 (2M enqueued-
+// token cap, ~3.5–4k tokens/request → ~1.75–2M per chunk). When switching
+// models or tiers, re-check OpenAI's per-org enqueued-token limit and adjust:
+// if a batch fails with token_limit_exceeded, drop this further.
 const MAX_REQUESTS_PER_CHUNK = 500;
 const MAX_FILE_BYTES = 90 * 1024 * 1024; // 90 MB hard cap
-// Only submit 1 OpenAI batch per POST call to stay under the 2M enqueued-token
-// org limit on gpt-4o-mini (Tier 1). Re-call POST after the current batch
-// completes — the endpoint re-queries WHERE summary IS NULL, so it naturally
-// picks up where it left off with no risk of re-processing.
+// Only submit 1 OpenAI batch per POST call to stay under the per-org
+// enqueued-token cap. Re-call POST after the current batch completes — the
+// endpoint re-queries WHERE summary IS NULL, so it naturally picks up where
+// it left off with no risk of re-processing.
 const MAX_CHUNKS_PER_SUBMISSION = 1;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -69,7 +68,7 @@ function buildJsonlLine(conv: {
     method: 'POST',
     url: '/v1/chat/completions',
     body: {
-      model: 'gpt-4o-mini',
+      model: 'gpt-5-mini',
       messages: [
         { role: 'system', content: promptContent },
         { role: 'user', content: buildUserMessage(conv) },
