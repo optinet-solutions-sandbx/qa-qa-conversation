@@ -18,19 +18,18 @@ import { ANALYSIS_MIN_DATE_ISO } from '@/lib/analyticsFilters';
 export const maxDuration = 300;
 
 // ── Constants ──────────────────────────────────────────────────────────────
-// Chunk size of 500 was originally tuned for gpt-4o-mini Tier 1 (2M enqueued-
-// token cap). When switching models or tiers, re-check OpenAI's per-org
-// enqueued-token limit and adjust: if a batch fails with
-// token_limit_exceeded, drop this further.
-const MAX_REQUESTS_PER_CHUNK = 500;
+// Chunk size dropped from 500 → 200 on 2026-04-29 after a single 500-chat
+// batch repeatedly failed with "Enqueued token limit reached" (gpt-5-mini org
+// cap is 5M enqueued tokens). Real-world transcripts on this app average
+// ~10–12k tokens per request, so 500 × 12k ≈ 6M > 5M cap, while
+// 200 × 12k ≈ 2.4M leaves comfortable headroom. If batches start failing
+// again, drop this further.
+const MAX_REQUESTS_PER_CHUNK = 200;
 const MAX_FILE_BYTES = 90 * 1024 * 1024;
-// gpt-5-mini org cap is 5,000,000 enqueued tokens (confirmed by an
-// "Enqueued token limit reached" failure on 2026-04-29 when MAX_CHUNKS_PER_RUN
-// was 3). A 500-chat batch averages ~2.5–3.5M tokens (longer transcripts than
-// originally sized for, plus 2048 output budget per request), so we hold this
-// at 1 to leave room for any concurrently in-flight batch from a prior tick.
-// Hourly cadence at 500 chats/run = 12k chats/day capacity — comfortably
-// above the 600–1000 daily volume target.
+// Held at 1 alongside the 200-chat chunk size. With both clamps, one cron run
+// enqueues ~2.4M tokens — safely under the 5M org cap even with another
+// batch in flight from a prior tick. Hourly cadence × 200 chats/run =
+// 4,800 chats/day capacity, comfortably above the 600–1000 daily volume.
 const MAX_CHUNKS_PER_RUN = 1;
 
 // ── Helpers ────────────────────────────────────────────────────────────────

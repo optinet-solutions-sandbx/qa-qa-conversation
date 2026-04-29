@@ -21,11 +21,12 @@ export const maxDuration = 300;
 
 // ── Rate-limit / size guards ───────────────────────────────────────────────
 // OpenAI Batch API limits: 50k requests per file, 100 MB per file.
-// Chunk size of 500 was originally tuned for gpt-4o-mini Tier 1 (2M enqueued-
-// token cap, ~3.5–4k tokens/request → ~1.75–2M per chunk). When switching
-// models or tiers, re-check OpenAI's per-org enqueued-token limit and adjust:
-// if a batch fails with token_limit_exceeded, drop this further.
-const MAX_REQUESTS_PER_CHUNK = 500;
+// Chunk size dropped from 500 → 200 on 2026-04-29 after a single 500-chat
+// batch repeatedly failed with "Enqueued token limit reached" (gpt-5-mini org
+// cap is 5M enqueued tokens). Real-world transcripts average ~10–12k tokens
+// per request, so 500 × 12k ≈ 6M > 5M cap, while 200 × 12k ≈ 2.4M leaves
+// comfortable headroom. Must stay in sync with analyze-daily route.
+const MAX_REQUESTS_PER_CHUNK = 200;
 const MAX_FILE_BYTES = 90 * 1024 * 1024; // 90 MB hard cap
 // Held at 1 to stay under gpt-5-mini's 5M enqueued-token org cap (confirmed
 // by an "Enqueued token limit reached" failure on 2026-04-29 when this was 3).
