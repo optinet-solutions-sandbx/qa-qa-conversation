@@ -204,13 +204,29 @@ export async function GET(req: NextRequest) {
         const b = await res.json();
         const newStatus = mapOpenAIStatus(b.status);
         const patch: Partial<BatchJob> = { status: newStatus };
+
+        // OpenAI's request_counts populates while a batch is in_progress, so
+        // mirror those into the DB on every poll. This gives the /batch-analysis
+        // UI a live "X/N processed" progress bar instead of jumping 0% → 100%
+        // only after the batch finishes.
+        const oaCompleted = b.request_counts?.completed ?? null;
+        const oaFailed = b.request_counts?.failed ?? null;
+        if (oaCompleted != null && oaCompleted !== job.completed_conversations) {
+          patch.completed_conversations = oaCompleted;
+        }
+        if (oaFailed != null && oaFailed !== job.failed_conversations) {
+          patch.failed_conversations = oaFailed;
+        }
         if (newStatus === 'completed') {
           patch.output_file_id = b.output_file_id ?? null;
           patch.completed_at = new Date().toISOString();
-          patch.completed_conversations = b.request_counts?.completed ?? job.completed_conversations;
-          patch.failed_conversations = b.request_counts?.failed ?? job.failed_conversations;
         }
-        if (newStatus !== job.status || patch.output_file_id) {
+        if (
+          newStatus !== job.status ||
+          patch.output_file_id ||
+          patch.completed_conversations != null ||
+          patch.failed_conversations != null
+        ) {
           await dbUpdateBatchJob(job.id, patch);
           Object.assign(job, patch);
         }
