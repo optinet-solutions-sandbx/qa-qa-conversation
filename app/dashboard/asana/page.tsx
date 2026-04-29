@@ -59,7 +59,7 @@ export default function AsanaDashboardPage() {
     setSyncing(true);
     setSyncMessage(null);
     try {
-      const res = await fetch('/api/admin/sync-asana-statuses');
+      const res = await fetch('/api/dashboard/asana/sync');
       const json = await res.json();
       if (!res.ok) {
         setSyncMessage(`Error: ${json.error ?? 'unknown'}`);
