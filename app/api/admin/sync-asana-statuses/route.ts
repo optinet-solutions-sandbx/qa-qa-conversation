@@ -55,15 +55,19 @@ export async function GET(req: NextRequest) {
   // so we just write-through every ticket's current state. Cheap because
   // there will be at most a few hundred rows in any realistic window and the
   // updates run in parallel via dbBatchUpdateAsanaStatus.
-  const updates: Array<{ id: string; completedAt: string | null }> = [];
+  // Tickets that Asana no longer returns are flagged via asana_task_deleted_at
+  // so the dashboard count matches the live board.
+  const now = new Date().toISOString();
+  const updates: Array<{ id: string; completedAt?: string | null; deletedAt?: string | null }> = [];
   let missing = 0;
   for (const t of tickets) {
     const s = statuses.get(t.asana_task_gid);
     if (!s) {
       missing += 1;
+      updates.push({ id: t.id, deletedAt: now });
       continue;
     }
-    updates.push({ id: t.id, completedAt: s.completed ? s.completed_at ?? new Date().toISOString() : null });
+    updates.push({ id: t.id, completedAt: s.completed ? s.completed_at ?? now : null });
   }
 
   try {

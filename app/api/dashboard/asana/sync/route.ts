@@ -40,17 +40,22 @@ export async function GET() {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
   }
 
-  const updates: Array<{ id: string; completedAt: string | null }> = [];
+  const now = new Date().toISOString();
+  const updates: Array<{ id: string; completedAt?: string | null; deletedAt?: string | null }> = [];
   let missing = 0;
   for (const t of tickets) {
     const s = statuses.get(t.asana_task_gid);
     if (!s) {
+      // Asana no longer returns this gid — mark deleted so the dashboard
+      // count drops to match the live board. asana_task_gid stays set so
+      // re-analysis won't recreate it.
       missing += 1;
+      updates.push({ id: t.id, deletedAt: now });
       continue;
     }
     updates.push({
       id: t.id,
-      completedAt: s.completed ? s.completed_at ?? new Date().toISOString() : null,
+      completedAt: s.completed ? s.completed_at ?? now : null,
     });
   }
 

@@ -37,9 +37,17 @@
 //
 //   ALTER TABLE conversations ADD COLUMN IF NOT EXISTS asana_task_gid TEXT;
 //   ALTER TABLE conversations ADD COLUMN IF NOT EXISTS asana_completed_at TIMESTAMPTZ;
+//   ALTER TABLE conversations ADD COLUMN IF NOT EXISTS asana_task_deleted_at TIMESTAMPTZ;
 //   CREATE INDEX IF NOT EXISTS conversations_asana_task_gid_idx
 //     ON conversations (asana_task_gid)
 //     WHERE asana_task_gid IS NOT NULL;
+//
+// Stale-GID handling: when the sync sees a ticket gid that Asana no longer
+// returns (deleted/archived/moved), we set asana_task_deleted_at so the
+// reporting page stops counting it. We keep asana_task_gid populated so the
+// dedup check in maybeCreateAsanaTicketForConversation still skips it — i.e.
+// re-analysis of that conversation will NOT silently re-create the ticket
+// the user deleted on purpose.
 
 const ASANA_API = 'https://app.asana.com/api/1.0';
 

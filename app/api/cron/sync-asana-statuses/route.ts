@@ -32,17 +32,21 @@ export async function GET(req: NextRequest) {
 
   const statuses = await fetchProjectTaskStatuses();
 
-  const updates: Array<{ id: string; completedAt: string | null }> = [];
+  const now = new Date().toISOString();
+  const updates: Array<{ id: string; completedAt?: string | null; deletedAt?: string | null }> = [];
   let missing = 0;
   for (const t of tickets) {
     const s = statuses.get(t.asana_task_gid);
     if (!s) {
+      // Asana no longer returns this gid — flag it so the dashboard count
+      // drops; gid stays so re-analysis can't recreate the deleted ticket.
       missing += 1;
+      updates.push({ id: t.id, deletedAt: now });
       continue;
     }
     updates.push({
       id: t.id,
-      completedAt: s.completed ? s.completed_at ?? new Date().toISOString() : null,
+      completedAt: s.completed ? s.completed_at ?? now : null,
     });
   }
 

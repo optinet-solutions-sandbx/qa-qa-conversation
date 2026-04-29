@@ -907,17 +907,21 @@ export async function dbUpdateAsanaTaskGid(id: string, gid: string): Promise<voi
 }
 
 export async function dbCountAsanaTickets(): Promise<number> {
+  // Excludes rows the sync has marked as deleted in Asana so the count
+  // matches the live board, not the historical record.
   const { count, error } = await supabase
     .from('conversations')
     .select('id', { count: 'exact', head: true })
-    .not('asana_task_gid', 'is', null);
+    .not('asana_task_gid', 'is', null)
+    .is('asana_task_deleted_at', null);
   if (error) throw new Error(`[db] count asana tickets: ${error.message}`);
   return count ?? 0;
 }
 
-// Returns every ticket gid we know about, paired with its conversation id.
-// Used by the sync-asana-statuses endpoint to map Asana's view of completion
-// back onto our rows.
+// Returns every live ticket gid we know about, paired with its conversation
+// id. Used by the sync-asana-statuses endpoints to map Asana's view of
+// completion back onto our rows. Tickets already flagged deleted are
+// skipped — once gone in Asana, we stop polling for them every cron tick.
 export async function dbListAllAsanaTickets(): Promise<
   Array<{ id: string; asana_task_gid: string }>
 > {
@@ -929,6 +933,7 @@ export async function dbListAllAsanaTickets(): Promise<
       .from('conversations')
       .select('id, asana_task_gid')
       .not('asana_task_gid', 'is', null)
+      .is('asana_task_deleted_at', null)
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`[db] list asana tickets: ${error.message}`);
     const rows = (data ?? []) as Array<{ id: string; asana_task_gid: string | null }>;
@@ -972,6 +977,7 @@ export async function dbGetAsanaReportingMetrics(): Promise<AsanaReportingMetric
       .from('conversations')
       .select('id, account_manager, summary, analyzed_at, asana_completed_at')
       .not('asana_task_gid', 'is', null)
+      .is('asana_task_deleted_at', null)
       .range(from, from + PAGE - 1);
     if (error) throw new Error(`[db] asana reporting: ${error.message}`);
     const page = (data ?? []) as Row[];
@@ -1035,21 +1041,33 @@ export async function dbGetAsanaReportingMetrics(): Promise<AsanaReportingMetric
   };
 }
 
-// Concurrent UPDATEs keyed by id. Mirrors dbBatchUpdateAnalysisFields' shape.
+// Concurrent UPDATEs keyed by id. An update with `completedAt` defined writes
+// asana_completed_at (open vs closed); one with `deletedAt` defined writes
+// asana_task_deleted_at (gone-in-Asana). Both fields are independent so the
+// caller picks per row. Undefined fields are not touched, so re-running with
+// only one field set is non-destructive.
 export async function dbBatchUpdateAsanaStatus(
-  updates: Array<{ id: string; completedAt: string | null }>,
+  updates: Array<{
+    id: string;
+    completedAt?: string | null;
+    deletedAt?: string | null;
+  }>,
 ): Promise<void> {
   if (updates.length === 0) return;
   await Promise.all(
-    updates.map(({ id, completedAt }) =>
-      supabase
+    updates.map(({ id, completedAt, deletedAt }) => {
+      const fields: Record<string, string | null> = {};
+      if (completedAt !== undefined) fields.asana_completed_at = completedAt;
+      if (deletedAt !== undefined)   fields.asana_task_deleted_at = deletedAt;
+      if (Object.keys(fields).length === 0) return Promise.resolve();
+      return supabase
         .from('conversations')
-        .update({ asana_completed_at: completedAt })
+        .update(fields)
         .eq('id', id)
         .then(({ error }) => {
-          if (error) throw new Error(`[db] update asana_completed_at (${id}): ${error.message}`);
-        }),
-    ),
+          if (error) throw new Error(`[db] update asana status (${id}): ${error.message}`);
+        });
+    }),
   );
 }
 
