@@ -12,6 +12,7 @@ import {
 } from '@/lib/db';
 import type { BatchJob, BatchJobStatus, AnalysisRun } from '@/lib/types';
 import { generateId } from '@/lib/utils';
+import { ANALYSIS_MIN_DATE_ISO } from '@/lib/analyticsFilters';
 
 // Allow up to 5 minutes on Vercel Pro
 export const maxDuration = 300;
@@ -23,9 +24,13 @@ export const maxDuration = 300;
 // token_limit_exceeded, drop this further.
 const MAX_REQUESTS_PER_CHUNK = 500;
 const MAX_FILE_BYTES = 90 * 1024 * 1024;
-// Only submit 1 batch per cron run to stay under the enqueued-token org limit.
-// The cron runs every 2 hours, so the next run picks up where this one left off.
-const MAX_CHUNKS_PER_RUN = 1;
+// Submit up to 3 batches per cron run so a 600–1500 chat day can be sent to
+// OpenAI in a single hourly run instead of trickling out one batch/hour. With
+// 500 chats/batch and ~3k input tokens/chat, 3 batches ≈ 4.5M enqueued tokens
+// — well under gpt-5-mini's tier cap. If a batch fails with
+// token_limit_exceeded the per-chunk try/catch logs and continues, so previous
+// chunks already submitted are not lost.
+const MAX_CHUNKS_PER_RUN = 3;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -296,7 +301,12 @@ export async function GET(req: NextRequest) {
     if (hasActiveJobs) {
       console.log('[cron] analyze-daily step B skipped: active batch jobs still in-flight');
     } else {
-      const totalUnanalyzed = await countUnanalyzedConversations();
+      // Floor to ANALYSIS_MIN_DATE_ISO so the cron only analyzes conversations
+      // from the dashboard cutoff onward — pre-cutoff rows stay in the DB but
+      // are intentionally skipped (no OpenAI spend on data the dashboard won't
+      // show anyway).
+      const dateFilter = { fromDate: ANALYSIS_MIN_DATE_ISO };
+      const totalUnanalyzed = await countUnanalyzedConversations(dateFilter);
 
       if (totalUnanalyzed === 0) {
         console.log('[cron] analyze-daily step B: no unanalyzed conversations');
@@ -310,7 +320,7 @@ export async function GET(req: NextRequest) {
           // them was OOM'ing the function (each row carries up to 60KB of
           // original_text, ~500MB total at scale → 500s).
           const targetRows = MAX_REQUESTS_PER_CHUNK * MAX_CHUNKS_PER_RUN;
-          const page = await getUnanalyzedConversationsPage(0, targetRows);
+          const page = await getUnanalyzedConversationsPage(0, targetRows, dateFilter);
           const lines = page.map((c) => buildJsonlLine(c, prompt.content));
           const chunks = chunkLines(lines);
           const totalChunks = Math.ceil(totalUnanalyzed / MAX_REQUESTS_PER_CHUNK);

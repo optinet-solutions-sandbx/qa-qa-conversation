@@ -15,11 +15,13 @@ function sleep(ms: number) {
   return new Promise<void>((res) => setTimeout(res, ms));
 }
 
-/** Returns the last N days in YYYY-MM-DD (UTC), most recent first. */
+/** Returns today + the previous N-1 days in YYYY-MM-DD (UTC), most recent first.
+ *  Today must be included so hourly cron runs surface live activity instead of
+ *  only finding chats one day later. */
 function lastNDaysUtc(n: number): string[] {
   return Array.from({ length: n }, (_, i) => {
     const d = new Date();
-    d.setUTCDate(d.getUTCDate() - (i + 1));
+    d.setUTCDate(d.getUTCDate() - i);
     return d.toISOString().slice(0, 10);
   });
 }

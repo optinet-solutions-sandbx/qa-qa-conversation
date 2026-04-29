@@ -39,10 +39,19 @@ interface DashboardData {
 
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 
+// Hard floor for the dashboard — kept in sync with ANALYSIS_MIN_DATE_ISO in
+// lib/analyticsFilters.ts. Pre-cutoff dates are silently bumped up to here so
+// stale localStorage values can't render an empty dashboard.
+const DASHBOARD_MIN_DATE = '2026-04-27';
+
 function yesterdayISO() {
   const d = new Date();
   d.setDate(d.getDate() - 1);
   return d.toISOString().slice(0, 10);
+}
+
+function flooredDate(d: string): string {
+  return d < DASHBOARD_MIN_DATE ? DASHBOARD_MIN_DATE : d;
 }
 
 function getCached(key: string): DashboardData | null {
@@ -275,14 +284,16 @@ export default function DashboardPage() {
   const [overlayFilters, setOverlayFilters] = useState<Record<string, string> | null>(null);
   const [overlayTitle, setOverlayTitle]     = useState('');
 
-  // Filters — default to yesterday so the dashboard opens with populated data
+  // Filters — default to yesterday so the dashboard opens with populated data.
+  // Stale localStorage values are floored to DASHBOARD_MIN_DATE so a March/early-
+  // April date left over from a prior session can't render an empty dashboard.
   const [dateFrom, setDateFrom] = useState(() => {
-    if (typeof window !== 'undefined') return localStorage.getItem('dashboard-dateFrom') || yesterdayISO();
-    return yesterdayISO();
+    if (typeof window !== 'undefined') return flooredDate(localStorage.getItem('dashboard-dateFrom') || yesterdayISO());
+    return flooredDate(yesterdayISO());
   });
   const [dateTo, setDateTo] = useState(() => {
-    if (typeof window !== 'undefined') return localStorage.getItem('dashboard-dateTo') || yesterdayISO();
-    return yesterdayISO();
+    if (typeof window !== 'undefined') return flooredDate(localStorage.getItem('dashboard-dateTo') || yesterdayISO());
+    return flooredDate(yesterdayISO());
   });
   const [brand, setBrand]                     = useState('');
   const [agent, setAgent]                     = useState('');

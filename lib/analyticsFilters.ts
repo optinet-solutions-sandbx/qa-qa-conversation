@@ -190,12 +190,23 @@ export interface DbFilterInputs {
   accountManager?: string | null;
 }
 
+// Hard floor: the dashboard ignores everything before this date. The collected
+// March/April-26 data stays in the DB but is filtered out everywhere this
+// helper is used. Update this if the cutoff ever changes.
+export const ANALYSIS_MIN_DATE_ISO = '2026-04-27T00:00:00.000Z';
+
 // Applies the date/brand/agent/AM filters to a Supabase query builder in the
 // exact same way on every code path that hits the conversations table.  This
 // is what keeps the dashboard overview counts and the drill-down list counts
 // in lock-step.
 export function applyConversationDbFilters(q: AnySupabaseQuery, f: DbFilterInputs): AnySupabaseQuery {
-  if (f.dateFrom) q = q.gte('intercom_created_at', new Date(f.dateFrom).toISOString());
+  // Floor dateFrom to ANALYSIS_MIN_DATE_ISO so callers can't dip below the
+  // cutoff (whether by passing an older date, an empty string, or null).
+  const requestedFromISO = f.dateFrom ? new Date(f.dateFrom).toISOString() : null;
+  const effectiveFromISO = requestedFromISO && requestedFromISO > ANALYSIS_MIN_DATE_ISO
+    ? requestedFromISO
+    : ANALYSIS_MIN_DATE_ISO;
+  q = q.gte('intercom_created_at', effectiveFromISO);
   if (f.dateTo) {
     const end = new Date(f.dateTo);
     end.setUTCDate(end.getUTCDate() + 1);
