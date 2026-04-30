@@ -37,30 +37,30 @@ interface DashboardData {
 
 // ── Cache helpers ──────────────────────────────────────────────────────────
 
-const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes — beyond this, refetch in background
 
 // Hard floor for the dashboard — kept in sync with ANALYSIS_MIN_DATE_ISO in
 // lib/analyticsFilters.ts. Pre-cutoff dates are silently bumped up to here so
-// stale localStorage values can't render an empty dashboard.
+// stale values can't render an empty dashboard.
 const DASHBOARD_MIN_DATE = '2026-04-27';
 
-function yesterdayISO() {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().slice(0, 10);
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
 }
 
 function flooredDate(d: string): string {
   return d < DASHBOARD_MIN_DATE ? DASHBOARD_MIN_DATE : d;
 }
 
-function getCached(key: string): DashboardData | null {
+// localStorage (not sessionStorage) so the cache survives full page reloads and
+// new tabs — the dashboard then opens instantly with the last-known payload
+// while a fresh fetch runs in the background.
+function getCached(key: string): { data: DashboardData; isStale: boolean } | null {
   try {
-    const raw = sessionStorage.getItem(`dashboard:${key}`);
+    const raw = localStorage.getItem(`dashboard:${key}`);
     if (!raw) return null;
     const { data, fetchedAt } = JSON.parse(raw) as { data: DashboardData; fetchedAt: number };
-    if (Date.now() - fetchedAt > CACHE_TTL) return null;
-    return data;
+    return { data, isStale: Date.now() - fetchedAt > CACHE_TTL };
   } catch {
     return null;
   }
@@ -68,7 +68,7 @@ function getCached(key: string): DashboardData | null {
 
 function setCached(key: string, data: DashboardData) {
   try {
-    sessionStorage.setItem(`dashboard:${key}`, JSON.stringify({ data, fetchedAt: Date.now() }));
+    localStorage.setItem(`dashboard:${key}`, JSON.stringify({ data, fetchedAt: Date.now() }));
   } catch {
     // ignore quota errors
   }
@@ -284,17 +284,11 @@ export default function DashboardPage() {
   const [overlayFilters, setOverlayFilters] = useState<Record<string, string> | null>(null);
   const [overlayTitle, setOverlayTitle]     = useState('');
 
-  // Filters — default to yesterday so the dashboard opens with populated data.
-  // Stale localStorage values are floored to DASHBOARD_MIN_DATE so a March/early-
-  // April date left over from a prior session can't render an empty dashboard.
-  const [dateFrom, setDateFrom] = useState(() => {
-    if (typeof window !== 'undefined') return flooredDate(localStorage.getItem('dashboard-dateFrom') || yesterdayISO());
-    return flooredDate(yesterdayISO());
-  });
-  const [dateTo, setDateTo] = useState(() => {
-    if (typeof window !== 'undefined') return flooredDate(localStorage.getItem('dashboard-dateTo') || yesterdayISO());
-    return flooredDate(yesterdayISO());
-  });
+  // Filters — date range always defaults to today on open. We deliberately don't
+  // persist date selections to localStorage: with near-real-time data, the user
+  // expects a fresh "today" view every time they open the dashboard.
+  const [dateFrom, setDateFrom] = useState(() => flooredDate(todayISO()));
+  const [dateTo, setDateTo]     = useState(() => flooredDate(todayISO()));
   const [brand, setBrand]                     = useState('');
   const [agent, setAgent]                     = useState('');
   const [accountManager, setAccountManager]   = useState('');
@@ -373,28 +367,35 @@ export default function DashboardPage() {
     if (severity)       params.set('severity',       severity);
 
     const cacheKey = params.toString();
-
-    if (!forceRef.current) {
-      const cached = getCached(cacheKey);
-      if (cached) {
-        setData(cached);
-        setLoading(false);
-        setError(null);
-        return;
-      }
-    }
+    const force = forceRef.current;
     forceRef.current = false;
 
-    setLoading(true);
-    setError(null);
+    // Stale-while-revalidate: render cached payload instantly so the dashboard
+    // opens without a heavy loading state. If the cache is fresh (< CACHE_TTL),
+    // we skip the network entirely; if stale, we silently refetch in the
+    // background and swap in the new data when it arrives.
+    const cached = force ? null : getCached(cacheKey);
+    if (cached) {
+      setData(cached.data);
+      setError(null);
+      setLoading(false);
+      if (!cached.isStale) return;
+    } else {
+      setLoading(true);
+      setError(null);
+    }
+
     try {
       const res = await fetch(`/api/dashboard?${params}`);
       if (!res.ok) throw new Error('Failed to load dashboard');
       const json = await res.json();
       setCached(cacheKey, json);
       setData(json);
+      setError(null);
     } catch (e) {
-      setError((e as Error).message);
+      // If we already have stale cached data on screen, keep it visible rather
+      // than blanking the dashboard with an error.
+      if (!cached) setError((e as Error).message);
     } finally {
       setLoading(false);
     }
@@ -453,7 +454,7 @@ export default function DashboardPage() {
           <input
             type="date"
             value={dateFrom}
-            onChange={(e) => { setDateFrom(e.target.value); localStorage.setItem('dashboard-dateFrom', e.target.value); }}
+            onChange={(e) => setDateFrom(e.target.value)}
             className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -462,7 +463,7 @@ export default function DashboardPage() {
           <input
             type="date"
             value={dateTo}
-            onChange={(e) => { setDateTo(e.target.value); localStorage.setItem('dashboard-dateTo', e.target.value); }}
+            onChange={(e) => setDateTo(e.target.value)}
             className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -561,7 +562,7 @@ export default function DashboardPage() {
         </div>
         {(dateFrom || dateTo || brand || agent || accountManager || vipLevel || language || severity || categories.length > 0 || issues.length > 0) && (
           <button
-            onClick={() => { setDateFrom(''); setDateTo(''); setBrand(''); setAgent(''); setAccountManager(''); setVipLevel(''); setLanguage(''); setSeverity(''); setCategories([]); setIssues([]); localStorage.removeItem('dashboard-dateFrom'); localStorage.removeItem('dashboard-dateTo'); }}
+            onClick={() => { setDateFrom(''); setDateTo(''); setBrand(''); setAgent(''); setAccountManager(''); setVipLevel(''); setLanguage(''); setSeverity(''); setCategories([]); setIssues([]); }}
             className="text-xs text-slate-400 hover:text-slate-600 underline pb-1.5"
           >
             Clear filters
