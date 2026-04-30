@@ -74,7 +74,7 @@
 // re-analysis of that conversation will NOT silently re-create the ticket
 // the user deleted on purpose.
 
-import { cleanPlayerName, getVipLevel, getBacklinkFull } from '@/lib/utils';
+import { cleanPlayerName, getVipLevel, getBacklinkFull, parseSummaryForTable } from '@/lib/utils';
 
 const ASANA_API = 'https://app.asana.com/api/1.0';
 
@@ -742,8 +742,10 @@ function buildTaskNotes(input: AsanaTaskInput): string {
   lines.push(`Link to Conversation in the Tool: ${toolLink ?? '—'}`);
   lines.push(SPACER);
 
-  lines.push('AI Conversation Summary:');
-  lines.push(input.summaryText);
+  lines.push('AI Chat Summary');
+  lines.push('');
+  const narrative = parseSummaryForTable(input.summaryText).summary;
+  lines.push(narrative ?? '—');
   return lines.join('\n');
 }
 
