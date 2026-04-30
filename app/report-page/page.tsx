@@ -91,7 +91,7 @@ export default function AsanaDashboardPage() {
   if (!data.configured) {
     return (
       <div className="p-6 max-w-6xl mx-auto">
-        <h1 className="text-2xl font-semibold tracking-tight mb-1">Asana Tickets</h1>
+        <h1 className="text-2xl font-semibold tracking-tight mb-1">Report Page</h1>
         <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800 mt-6">
           Asana isn&apos;t configured yet. Set <code>ASANA_ACCESS_TOKEN</code>{' '}
           and <code>ASANA_PROJECT_GID</code> in env to start pushing tickets.
@@ -104,7 +104,7 @@ export default function AsanaDashboardPage() {
     <div className="p-6 max-w-6xl mx-auto space-y-6">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight mb-1">Asana Tickets</h1>
+          <h1 className="text-2xl font-semibold tracking-tight mb-1">Report Page</h1>
           <p className="text-sm text-slate-500">
             Severity-3 conversations are pushed to Asana as action items routed
             by agent (column) and tagged by account manager (custom field).

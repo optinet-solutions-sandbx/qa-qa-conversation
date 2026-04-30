@@ -93,7 +93,7 @@ function IconTicket() {
 
 const NAV_ITEMS = [
   { href: '/dashboard', label: 'Dashboard', icon: <IconDashboard /> },
-  { href: '/dashboard/asana', label: 'Asana Tickets', icon: <IconTicket /> },
+  { href: '/report-page', label: 'Report Page', icon: <IconTicket /> },
   { href: '/ask-ai', label: 'Ask AI', icon: <IconSparkle /> },
   { href: '/', label: 'Conversations', icon: <IconChat /> },
   { href: '/collect', label: 'Collect', icon: <IconCollect /> },
