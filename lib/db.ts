@@ -433,6 +433,8 @@ export interface ConversationFilters {
   dateTo?: string;
   analyzed?: boolean;
   alert_worthy?: boolean;
+  asana_ticketed?: boolean;            // narrows to rows that have a live Asana task
+  asana_status?: 'open' | 'closed';    // implies asana_ticketed=true
 }
 
 // vip_level isn't stored as a column — it's derived from player_tags /
@@ -464,6 +466,8 @@ export async function loadConversations(
     brand:          filters.brand,
     agent:          filters.agent_name,
     accountManager: filters.account_manager,
+    asanaTicketed:  filters.asana_ticketed,
+    asanaStatus:    filters.asana_status,
   });
   if (filters.analyzed === true)     query = query.not('summary', 'is', null);
   if (filters.analyzed === false)    query = query.is('summary', null);
@@ -498,6 +502,8 @@ function buildJsonFilterBaseQuery(fields: string, filters: ConversationFilters):
     brand:          filters.brand,
     agent:          filters.agent_name,
     accountManager: filters.account_manager,
+    asanaTicketed:  filters.asana_ticketed,
+    asanaStatus:    filters.asana_status,
   });
   if (filters.alert_worthy === true) q = q.eq('is_alert_worthy', true);
   return q;
@@ -969,11 +975,21 @@ export interface AsanaReportingMetrics {
   ticketsByAm: Array<{ label: string; count: number }>;
   ticketsBySeverity: Array<{ label: string; count: number }>;
   ticketsByCategory: Array<{ label: string; count: number }>;
-  ticketsByDate: Array<{ date: string; count: number }>;       // YYYY-MM-DD, sorted asc
+  ticketsByDate: Array<{ date: string; count: number }>;       // escalations created, YYYY-MM-DD asc
+  closuresByDate: Array<{ date: string; count: number }>;      // tickets closed by AMs, YYYY-MM-DD asc
   lastSyncedAt: string | null;                                  // most recent asana_completed_at write
 }
 
-export async function dbGetAsanaReportingMetrics(): Promise<AsanaReportingMetrics> {
+export interface AsanaReportingFilters {
+  from?: string | null;        // YYYY-MM-DD inclusive — filters by analyzed_at
+  to?: string | null;          // YYYY-MM-DD inclusive — filters by analyzed_at
+  am?: string | null;          // exact account_manager match (case-insensitive)
+  severity?: string | null;    // matches normalized severity ("Level 1" / "Level 2" / "Level 3")
+}
+
+export async function dbGetAsanaReportingMetrics(
+  filters: AsanaReportingFilters = {},
+): Promise<AsanaReportingMetrics> {
   const PAGE = 1000;
   type Row = {
     id: string;
@@ -998,15 +1014,46 @@ export async function dbGetAsanaReportingMetrics(): Promise<AsanaReportingMetric
     from += PAGE;
   }
 
+  // Filtering happens in JS so the same paginated read can serve any slice.
+  // We need the row-level summary parse anyway to bucket severity, so adding
+  // a server-side WHERE wouldn't save much.
+  const fromDate = filters.from?.trim() || null;
+  const toDate   = filters.to?.trim() || null;
+  const amWanted = filters.am?.trim().toLowerCase() || null;
+  const sevWanted = filters.severity?.trim() || null;
+
   let openTickets = 0;
   let closedTickets = 0;
+  let totalTickets = 0;
   const amCounts = new Map<string, number>();
   const sevCounts = new Map<string, number>();
   const catCounts = new Map<string, number>();
   const dateCounts = new Map<string, number>();
+  const closureDateCounts = new Map<string, number>();
   let lastSyncedAt: string | null = null;
 
   for (const r of rows) {
+    const createdDate = r.analyzed_at ? r.analyzed_at.slice(0, 10) : null;
+    const closedDate  = r.asana_completed_at ? r.asana_completed_at.slice(0, 10) : null;
+
+    // Date filter applies to the ticket's created date (analyzed_at). Tickets
+    // without an analyzed_at can't be placed on the timeline, so they're
+    // excluded whenever a date filter is active.
+    if (fromDate || toDate) {
+      if (!createdDate) continue;
+      if (fromDate && createdDate < fromDate) continue;
+      if (toDate   && createdDate > toDate)   continue;
+    }
+
+    const am = (r.account_manager ?? '').trim() || 'Unassigned';
+    if (amWanted && am.toLowerCase() !== amWanted) continue;
+
+    const parsed = parseAnalysisSummary(r.summary);
+    const sev = normalizeSeverity(parsed.dissatisfaction_severity) ?? 'Unknown';
+    if (sevWanted && sev !== sevWanted) continue;
+
+    totalTickets += 1;
+
     if (r.asana_completed_at) {
       closedTickets += 1;
       if (!lastSyncedAt || r.asana_completed_at > lastSyncedAt) lastSyncedAt = r.asana_completed_at;
@@ -1014,11 +1061,7 @@ export async function dbGetAsanaReportingMetrics(): Promise<AsanaReportingMetric
       openTickets += 1;
     }
 
-    const am = (r.account_manager ?? '').trim() || 'Unassigned';
     amCounts.set(am, (amCounts.get(am) ?? 0) + 1);
-
-    const parsed = parseAnalysisSummary(r.summary);
-    const sev = normalizeSeverity(parsed.dissatisfaction_severity) ?? 'Unknown';
     sevCounts.set(sev, (sevCounts.get(sev) ?? 0) + 1);
 
     // A single conversation can flag multiple categories — count each once
@@ -1032,21 +1075,26 @@ export async function dbGetAsanaReportingMetrics(): Promise<AsanaReportingMetric
       catCounts.set(c, (catCounts.get(c) ?? 0) + 1);
     }
 
-    if (r.analyzed_at) {
-      const date = r.analyzed_at.slice(0, 10);                  // YYYY-MM-DD in UTC
-      dateCounts.set(date, (dateCounts.get(date) ?? 0) + 1);
+    if (createdDate) {
+      dateCounts.set(createdDate, (dateCounts.get(createdDate) ?? 0) + 1);
+    }
+    if (closedDate) {
+      closureDateCounts.set(closedDate, (closureDateCounts.get(closedDate) ?? 0) + 1);
     }
   }
 
   const sortDesc = (a: { count: number }, b: { count: number }) => b.count - a.count;
   return {
-    totalTickets: rows.length,
+    totalTickets,
     openTickets,
     closedTickets,
     ticketsByAm: [...amCounts].map(([label, count]) => ({ label, count })).sort(sortDesc),
     ticketsBySeverity: [...sevCounts].map(([label, count]) => ({ label, count })).sort(sortDesc),
     ticketsByCategory: [...catCounts].map(([label, count]) => ({ label, count })).sort(sortDesc).slice(0, 10),
     ticketsByDate: [...dateCounts]
+      .map(([date, count]) => ({ date, count }))
+      .sort((a, b) => a.date.localeCompare(b.date)),
+    closuresByDate: [...closureDateCounts]
       .map(([date, count]) => ({ date, count }))
       .sort((a, b) => a.date.localeCompare(b.date)),
     lastSyncedAt,

@@ -34,6 +34,9 @@ export async function GET(req: NextRequest) {
   if (sp.get('analyzed') !== null && sp.get('analyzed') !== '')
     filters.analyzed = sp.get('analyzed') === 'true';
   if (sp.get('alert_worthy') === 'true')  filters.alert_worthy             = true;
+  if (sp.get('asana_ticketed') === 'true') filters.asana_ticketed          = true;
+  const status = sp.get('asana_status');
+  if (status === 'open' || status === 'closed') filters.asana_status        = status;
 
   try {
     const result = needsJsonFilter(filters)

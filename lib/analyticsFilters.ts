@@ -188,6 +188,12 @@ export interface DbFilterInputs {
   brand?:    string | null;
   agent?:    string | null;
   accountManager?: string | null;
+  // Asana ticketing filters (used by Report Page drill-downs).
+  // asana_ticketed=true narrows to rows that currently have a live Asana task.
+  // asana_status further narrows that set to open vs closed; setting it
+  // implies asana_ticketed=true even when caller didn't pass it.
+  asanaTicketed?: boolean;
+  asanaStatus?:  'open' | 'closed';
 }
 
 // Hard floor: the dashboard ignores everything before this date. The collected
@@ -231,5 +237,12 @@ export function applyConversationDbFilters(q: AnySupabaseQuery, f: DbFilterInput
     const quotedTags = amTags.map((t) => `"${t}"`).join(',');
     q = q.or(`account_manager.eq.${am},player_tags.ov.{${quotedTags}}`);
   }
+  // Mirror the row set that dbGetAsanaReportingMetrics uses: a "live" ticket
+  // is one whose gid is set and whose task hasn't been deleted in Asana.
+  if (f.asanaTicketed || f.asanaStatus) {
+    q = q.not('asana_task_gid', 'is', null).is('asana_task_deleted_at', null);
+  }
+  if (f.asanaStatus === 'open')   q = q.is('asana_completed_at', null);
+  if (f.asanaStatus === 'closed') q = q.not('asana_completed_at', 'is', null);
   return q;
 }
