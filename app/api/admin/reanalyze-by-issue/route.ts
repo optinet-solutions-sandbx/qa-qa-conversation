@@ -5,6 +5,7 @@ import {
   dbGetConversationsByIssueBeforeCutoff,
   dbCountConversationsByIssueBeforeCutoff,
 } from '@/lib/db';
+import { ANALYSIS_MIN_DATE_ISO } from '@/lib/analyticsFilters';
 import { analyzeBatchSequential } from '@/lib/analyze-sync';
 
 // Re-runs a batch of conversations that were tagged with a specific issue
@@ -12,10 +13,12 @@ import { analyzeBatchSequential } from '@/lib/analyze-sync';
 // so they get re-evaluated by gpt-4o. Designed to be called in a loop until
 // `remaining` reaches 0.
 //
-// POST /api/admin/reanalyze-by-issue?issue=<label>&cutoff=<ISO>&limit=<N>
+// POST /api/admin/reanalyze-by-issue?issue=<label>&cutoff=<ISO>&fromDate=<ISO>&limit=<N>
 //   - Authenticates with CRON_SECRET
-//   - Loads up to `limit` conversations whose summary contains <label> and
-//     whose analyzed_at is before <cutoff>
+//   - Loads up to `limit` conversations whose AI-analysis JSON has the
+//     structured tag `"item":"<label>"`, whose analyzed_at is before <cutoff>,
+//     and whose intercom_created_at is on/after <fromDate> (defaults to the
+//     dashboard's April 27 floor — same scope the dashboard reports against).
 //   - Runs them sequentially via analyzeBatchSequential (15s spacing,
 //     gpt-4o, 429 retry-with-backoff)
 //   - Returns analyzed/failed counts plus `remaining` so a calling script
@@ -52,6 +55,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'cutoff is not a valid ISO timestamp' }, { status: 400 });
   }
 
+  const fromDate = req.nextUrl.searchParams.get('fromDate')?.trim() || ANALYSIS_MIN_DATE_ISO;
+  if (Number.isNaN(Date.parse(fromDate))) {
+    return NextResponse.json({ error: 'fromDate is not a valid ISO timestamp' }, { status: 400 });
+  }
+
   const limitParam = parseInt(req.nextUrl.searchParams.get('limit') ?? String(DEFAULT_LIMIT), 10);
   const limit = Math.min(Math.max(1, isNaN(limitParam) ? DEFAULT_LIMIT : limitParam), MAX_LIMIT);
 
@@ -60,12 +68,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'No active prompt found' }, { status: 500 });
   }
 
-  const conversations = await dbGetConversationsByIssueBeforeCutoff(issue, cutoff, limit);
+  let conversations;
+  try {
+    conversations = await dbGetConversationsByIssueBeforeCutoff(issue, cutoff, fromDate, limit);
+  } catch (e) {
+    return NextResponse.json({ error: (e as Error).message }, { status: 400 });
+  }
 
   if (conversations.length === 0) {
     return NextResponse.json({
       issue,
       cutoff,
+      fromDate,
       remaining: 0,
       processed: 0,
       analyzed: 0,
@@ -80,16 +94,17 @@ export async function POST(req: NextRequest) {
   const analyzed = results.filter((r) => r.status === 'analyzed').length;
   const failed = results.filter((r) => r.status === 'failed').length;
 
-  // After we've re-analyzed this batch, count what's still pending. Note: a
-  // conversation's row drops out of this count only if gpt-4o produced a
-  // summary that no longer contains the issue substring. If gpt-4o agrees
-  // with the old verdict, the row stays — but its analyzed_at is now past
-  // the cutoff, so it's still excluded from future iterations.
-  const remaining = await dbCountConversationsByIssueBeforeCutoff(issue, cutoff);
+  // After we've re-analyzed this batch, count what's still pending. A row
+  // drops out of this count if gpt-4o produced a summary that no longer
+  // tags the issue, OR if gpt-4o re-confirmed the same tag (because then
+  // analyzed_at is now past the cutoff). Either way it won't be picked
+  // again on the next iteration.
+  const remaining = await dbCountConversationsByIssueBeforeCutoff(issue, cutoff, fromDate);
 
   return NextResponse.json({
     issue,
     cutoff,
+    fromDate,
     remaining,
     processed: conversations.length,
     analyzed,

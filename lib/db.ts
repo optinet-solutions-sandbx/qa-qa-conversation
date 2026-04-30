@@ -844,20 +844,30 @@ export async function dbGetConversationsByIds(ids: string[]): Promise<MinimalCon
   return (data ?? []) as MinimalConversation[];
 }
 
-// Fetches conversations whose summary text contains a literal substring AND
-// whose last analysis predates a cutoff. Used to re-run a specific issue
-// label (e.g. "Slow response times") through a newer/better model without
-// re-analyzing conversations that were already updated post-cutoff.
+// Fetches conversations whose AI-analysis JSON tags a specific issue label
+// (e.g. matches `"item":"Slow response times"` inside summary), whose last
+// analysis predates a cutoff, and whose Intercom creation date is on/after a
+// floor. Used to re-run a stale verdict through a newer model without
+// touching already-fixed rows or older data outside the dashboard's scope.
+//
+// Matching is restricted to the structured JSON value via OR-of-two-ILIKEs,
+// so narrative mentions of the phrase in key_quotes / summary text don't
+// produce false positives. Both compact (no space after colon) and spaced
+// JSON formats are covered — those are the only two shapes the model emits
+// in practice.
 export async function dbGetConversationsByIssueBeforeCutoff(
-  issueSubstring: string,
+  issueLabel: string,
   cutoffISO: string,
+  fromDateISO: string,
   limit: number,
 ): Promise<MinimalConversation[]> {
+  const orFilter = buildIssueTagOrFilter(issueLabel);
   const { data, error } = await supabase
     .from('conversations')
     .select('id, intercom_id, player_name, player_email, agent_name, brand, original_text')
-    .ilike('summary', `%${issueSubstring}%`)
+    .or(orFilter)
     .lt('analyzed_at', cutoffISO)
+    .gte('intercom_created_at', fromDateISO)
     .order('analyzed_at', { ascending: true })
     .limit(limit);
   if (error) throw new Error(`[db] get conversations by issue: ${error.message}`);
@@ -868,16 +878,31 @@ export async function dbGetConversationsByIssueBeforeCutoff(
 // dbGetConversationsByIssueBeforeCutoff. Used to surface a "remaining" number
 // to the admin loop so it knows when to stop.
 export async function dbCountConversationsByIssueBeforeCutoff(
-  issueSubstring: string,
+  issueLabel: string,
   cutoffISO: string,
+  fromDateISO: string,
 ): Promise<number> {
+  const orFilter = buildIssueTagOrFilter(issueLabel);
   const { count, error } = await supabase
     .from('conversations')
     .select('id', { count: 'exact', head: true })
-    .ilike('summary', `%${issueSubstring}%`)
-    .lt('analyzed_at', cutoffISO);
+    .or(orFilter)
+    .lt('analyzed_at', cutoffISO)
+    .gte('intercom_created_at', fromDateISO);
   if (error) throw new Error(`[db] count conversations by issue: ${error.message}`);
   return count ?? 0;
+}
+
+// Builds a Supabase `.or()` filter string that matches the issue label as a
+// structured JSON value (`"item":"<label>"` with or without a space). Throws
+// on label characters that would break the comma-separated .or() syntax.
+function buildIssueTagOrFilter(issueLabel: string): string {
+  if (/[,()]/.test(issueLabel)) {
+    throw new Error('issueLabel may not contain commas or parentheses');
+  }
+  const compact = `%"item":"${issueLabel}"%`;
+  const spaced  = `%"item": "${issueLabel}"%`;
+  return `summary.ilike.${compact},summary.ilike.${spaced}`;
 }
 
 // Writes only the AI analysis fields — does NOT overwrite Intercom metadata

@@ -31,18 +31,20 @@ fi
 APP_URL="${APP_URL:-https://ai-chat-qa-tool.vercel.app}"
 ISSUE="${ISSUE:-Slow response times}"
 CUTOFF="${CUTOFF:-2026-04-30T13:30:00Z}"
+FROM_DATE="${FROM_DATE:-2026-04-27T00:00:00Z}"
 LIMIT="${LIMIT:-10}"
 PAUSE="${PAUSE:-3}"
 
 # URL-encode spaces in the issue label so the query string is valid.
 ISSUE_ENCODED="${ISSUE// /%20}"
 
-ENDPOINT="${APP_URL}/api/admin/reanalyze-by-issue?issue=${ISSUE_ENCODED}&cutoff=${CUTOFF}&limit=${LIMIT}"
+ENDPOINT="${APP_URL}/api/admin/reanalyze-by-issue?issue=${ISSUE_ENCODED}&cutoff=${CUTOFF}&fromDate=${FROM_DATE}&limit=${LIMIT}"
 
 echo "Reanalyzing conversations tagged: \"${ISSUE}\""
-echo "  cutoff: ${CUTOFF}"
-echo "  limit:  ${LIMIT} per call"
-echo "  pause:  ${PAUSE}s between calls"
+echo "  fromDate: ${FROM_DATE}  (intercom_created_at floor)"
+echo "  cutoff:   ${CUTOFF}  (re-runs analyses before this)"
+echo "  limit:    ${LIMIT} per call"
+echo "  pause:    ${PAUSE}s between calls"
 echo
 
 iteration=0
