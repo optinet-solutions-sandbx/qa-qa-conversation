@@ -8,7 +8,7 @@ import {
   applyConversationDbFilters,
   normalizeSeverity,
 } from './analyticsFilters';
-import { getVipLevelNum, parseVipLevelFilter } from './utils';
+import { getSegment, getVipLevelNum, parseSegmentFilter, parseVipLevelFilter } from './utils';
 
 // ── Shared row mapper ──────────────────────────────────────────────────────
 
@@ -431,6 +431,7 @@ export interface ConversationFilters {
   brand?: string | string[];
   agent_name?: string | string[];
   account_manager?: string | string[];
+  segment?: string | string[];
   vip_level?: string | string[];
   dateFrom?: string;
   dateTo?: string;
@@ -449,14 +450,16 @@ function hasFilter(v: string | string[] | undefined | null): boolean {
   return asArray(v).length > 0;
 }
 
-// vip_level isn't stored as a column — it's derived from player_tags /
-// player_segments / player_companies, so it has to be filtered in-memory the
-// same way the JSON-summary filters are. Routing it through the JSON-filter
-// path is what keeps that filtering off the simple loadConversations path.
+// vip_level / segment aren't stored as columns — they're derived from
+// player_tags / player_segments / player_companies, so they have to be
+// filtered in-memory the same way the JSON-summary filters are. Routing them
+// through the JSON-filter path is what keeps that filtering off the simple
+// loadConversations path.
 export function needsJsonFilter(filters: ConversationFilters): boolean {
   return hasFilter(filters.resolution_status) || hasFilter(filters.dissatisfaction_severity) ||
          hasFilter(filters.issue_category)    || hasFilter(filters.issue_item) ||
-         hasFilter(filters.language)          || hasFilter(filters.vip_level);
+         hasFilter(filters.language)          || hasFilter(filters.vip_level) ||
+         hasFilter(filters.segment);
 }
 
 export async function loadConversations(
@@ -544,7 +547,7 @@ export async function loadConversationsWithJsonFilter(
     tags?: string[] | null;
     player_custom_attributes?: Record<string, unknown> | null;
   };
-  const slimFields = filters.vip_level
+  const slimFields = filters.vip_level || filters.segment
     ? 'id, summary, player_tags, player_segments, player_companies, tags, player_custom_attributes'
     : 'id, summary';
   const slimById = new Map<string, Slim>();
@@ -619,6 +622,27 @@ export async function loadConversationsWithJsonFilter(
   if (items.length > 0) {
     const matcher = buildIssueMatcher(items);
     filtered = filtered.filter(({ summary }) => summary.results.some((x) => matcher(x.item)));
+  }
+
+  const segs = asArray(filters.segment);
+  if (segs.length > 0) {
+    const targets = new Set(
+      segs.map((s) => parseSegmentFilter(s)).filter((s): s is 'VIP' | 'NON-VIP' | 'SoftSwiss' => s != null),
+    );
+    if (targets.size === 0) {
+      filtered = [];
+    } else {
+      filtered = filtered.filter(({ row }) => {
+        const seg = getSegment({
+          player_tags:              row.player_tags ?? [],
+          player_segments:          row.player_segments ?? [],
+          player_companies:         row.player_companies ?? [],
+          tags:                     row.tags ?? [],
+          player_custom_attributes: row.player_custom_attributes ?? null,
+        });
+        return seg != null && targets.has(seg);
+      });
+    }
   }
 
   const vips = asArray(filters.vip_level);

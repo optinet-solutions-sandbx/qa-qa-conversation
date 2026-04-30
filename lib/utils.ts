@@ -105,7 +105,17 @@ export function getAmGroupsForFilter(am: string): string[] {
     .map(([group]) => group);
 }
 
-export function getSegment(conv: Conversation): 'VIP' | 'NON-VIP' | 'SoftSwiss' | null {
+// Structural shape used by both getSegment and getVipLevelNum so callers can
+// pass slim row objects (dashboard analytics, drill-down filter) without
+// having to construct a full Conversation.
+export type PlayerAttrsInput = Pick<Conversation, 'player_tags' | 'player_segments' | 'tags' | 'player_custom_attributes'> & {
+  player_companies?: { name: string }[] | null;
+};
+
+export const SEGMENTS = ['VIP', 'NON-VIP', 'SoftSwiss'] as const;
+export type Segment = typeof SEGMENTS[number];
+
+export function getSegment(conv: PlayerAttrsInput): Segment | null {
   const companyNames = (conv.player_companies ?? []).map((c) => c.name);
   const allGroups = [
     ...(conv.player_tags ?? []),
@@ -129,6 +139,15 @@ export function getSegment(conv: Conversation): 'VIP' | 'NON-VIP' | 'SoftSwiss' 
   const segs = conv.player_segments ?? [];
   if (segs.some((s) => /^vip$/i.test(s.trim()))) return 'VIP';
   if (segs.some((s) => /non.?vip/i.test(s))) return 'NON-VIP';
+  return null;
+}
+
+export function parseSegmentFilter(raw: string | null | undefined): Segment | null {
+  if (!raw) return null;
+  const s = String(raw).trim().toUpperCase().replace(/[\s-]/g, '');
+  if (s === 'VIP') return 'VIP';
+  if (s === 'NONVIP') return 'NON-VIP';
+  if (s === 'SOFTSWISS') return 'SoftSwiss';
   return null;
 }
 

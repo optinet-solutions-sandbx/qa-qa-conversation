@@ -39,6 +39,7 @@ export async function GET(req: NextRequest) {
   setMulti('brand',                    multi('brand'));
   setMulti('agent_name',               multi('agent_name'));
   setMulti('account_manager',          multi('account_manager'));
+  setMulti('segment',                  multi('segment'));
   setMulti('vip_level',                multi('vip_level'));
   if (sp.get('dateFrom'))                 filters.dateFrom                 = sp.get('dateFrom')!;
   if (sp.get('dateTo'))                   filters.dateTo                   = sp.get('dateTo')!;

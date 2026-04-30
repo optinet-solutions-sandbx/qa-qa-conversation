@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ConversationsOverlay from '@/components/dashboard/ConversationsOverlay';
-import { AM_NAMES, VIP_LEVELS } from '@/lib/utils';
+import { AM_NAMES, SEGMENTS, VIP_LEVELS } from '@/lib/utils';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line,
@@ -104,6 +104,7 @@ const OVERLAY_LABELS: Record<string, string> = {
   brand:                    'Brand',
   agent_name:               'Agent',
   account_manager:          'Account Manager',
+  segment:                  'Segment',
   vip_level:                'VIP Level',
   dateFrom:                 'Date',
   analyzed:                 'Analyzed',
@@ -292,6 +293,7 @@ export default function DashboardPage() {
   const [brands, setBrands]                     = useState<string[]>([]);
   const [agents, setAgents]                     = useState<string[]>([]);
   const [accountManagers, setAccountManagers]   = useState<string[]>([]);
+  const [segments, setSegments]                 = useState<string[]>([]);
   const [vipLevels, setVipLevels]               = useState<string[]>([]);
   const [languages, setLanguages]               = useState<string[]>([]);
   const [categories, setCategories]             = useState<string[]>([]);
@@ -309,6 +311,7 @@ export default function DashboardPage() {
     passMulti('brand',           brands);
     passMulti('agent_name',      agents);
     passMulti('account_manager', accountManagers);
+    passMulti('segment',         segments);
     passMulti('vip_level',       vipLevels);
     passMulti('language',        languages);
     passMulti('issue_category',  categories);
@@ -339,7 +342,7 @@ export default function DashboardPage() {
     setOverlayTitle(title);
     setOverlayFilters(filters);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo, brands, agents, accountManagers, vipLevels, languages, categories, issues, severities]);
+  }, [dateFrom, dateTo, brands, agents, accountManagers, segments, vipLevels, languages, categories, issues, severities]);
 
   // Restore overlay state from URL (used when a new tab is opened via Ctrl/middle-click)
   useEffect(() => {
@@ -364,6 +367,7 @@ export default function DashboardPage() {
     brands.forEach((b)          => params.append('brand',          b));
     agents.forEach((a)          => params.append('agent',          a));
     accountManagers.forEach((m) => params.append('accountManager', m));
+    segments.forEach((s)        => params.append('segment',        s));
     vipLevels.forEach((v)       => params.append('vipLevel',       v));
     languages.forEach((l)       => params.append('language',       l));
     categories.forEach((c)      => params.append('category',       c));
@@ -403,7 +407,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, brands, agents, accountManagers, vipLevels, languages, categories, issues, severities]);
+  }, [dateFrom, dateTo, brands, agents, accountManagers, segments, vipLevels, languages, categories, issues, severities]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -502,6 +506,16 @@ export default function DashboardPage() {
           />
         </div>
         <div>
+          <label className="block text-xs font-medium text-slate-500 mb-1">Segment</label>
+          <MultiSelectFilter
+            options={[...SEGMENTS]}
+            selected={segments}
+            onChange={setSegments}
+            placeholder="All segments"
+            emptyText="No segments"
+          />
+        </div>
+        <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">VIP Level</label>
           <MultiSelectFilter
             options={[...VIP_LEVELS]}
@@ -556,9 +570,9 @@ export default function DashboardPage() {
             disabled={categories.length === 0}
           />
         </div>
-        {(dateFrom || dateTo || brands.length > 0 || agents.length > 0 || accountManagers.length > 0 || vipLevels.length > 0 || languages.length > 0 || severities.length > 0 || categories.length > 0 || issues.length > 0) && (
+        {(dateFrom || dateTo || brands.length > 0 || agents.length > 0 || accountManagers.length > 0 || segments.length > 0 || vipLevels.length > 0 || languages.length > 0 || severities.length > 0 || categories.length > 0 || issues.length > 0) && (
           <button
-            onClick={() => { setDateFrom(''); setDateTo(''); setBrands([]); setAgents([]); setAccountManagers([]); setVipLevels([]); setLanguages([]); setSeverities([]); setCategories([]); setIssues([]); }}
+            onClick={() => { setDateFrom(''); setDateTo(''); setBrands([]); setAgents([]); setAccountManagers([]); setSegments([]); setVipLevels([]); setLanguages([]); setSeverities([]); setCategories([]); setIssues([]); }}
             className="text-xs text-slate-400 hover:text-slate-600 underline pb-1.5"
           >
             Clear filters
