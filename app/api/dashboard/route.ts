@@ -283,17 +283,16 @@ export async function GET(req: NextRequest) {
     const resolutionBreakdown = countBy(filteredParsed, (p) => p.resolution_status);
 
     // ── Severity breakdown ───────────────────────────────────────────────
-    // The current prompt asks the AI for a numeric severity (1/2/3).  We
-    // normalise raw values to "Level 1/2/3" so variants like "1", "Level 1",
-    // or numeric JSON values all bucket together, and render an explicit
-    // "Unknown" bucket for everything else (legacy Low/Medium/High/Critical
-    // from older prompts, nulls, or values the AI didn't emit).  The 1/2/3
-    // buckets always appear on the chart even at zero count so the breakdown
-    // stays readable while the backlog re-analyses.
-    const SEVERITY_ORDER = ['Level 1', 'Level 2', 'Level 3', 'Unknown'];
-    const severityCounts: Record<string, number> = { 'Level 1': 0, 'Level 2': 0, 'Level 3': 0, Unknown: 0 };
+    // The current prompt asks the AI for a numeric severity (1/2/3) only when
+    // dissatisfaction is detected.  Conversations where the AI found no
+    // dissatisfaction (empty results[] → severity null, rendered as "—") are
+    // excluded from the chart entirely — counting them as "Unknown" inflated
+    // the bucket with chats that have no dissatisfaction to measure.
+    const SEVERITY_ORDER = ['Level 1', 'Level 2', 'Level 3'];
+    const severityCounts: Record<string, number> = { 'Level 1': 0, 'Level 2': 0, 'Level 3': 0 };
     for (const p of filteredParsed) {
-      const label = normalizeSeverity(p.severity) ?? 'Unknown';
+      const label = normalizeSeverity(p.severity);
+      if (!label) continue;
       severityCounts[label] = (severityCounts[label] ?? 0) + 1;
     }
     const severityBreakdown = SEVERITY_ORDER.map((label) => ({ label, count: severityCounts[label] ?? 0 }));
