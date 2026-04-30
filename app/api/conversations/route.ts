@@ -19,16 +19,27 @@ export async function GET(req: NextRequest) {
   const page    = parseInt(sp.get('page')    ?? '0',  10);
   const perPage = parseInt(sp.get('perPage') ?? '24', 10);
 
+  // Multi-value filters use repeated query params (e.g. ?brand=A&brand=B).
+  // A single-value caller sends one value; both shapes resolve to a string[]
+  // via getAll(), and the downstream filters treat single-element arrays the
+  // same as a string.
+  const multi = (key: string): string[] => sp.getAll(key).filter((v) => v !== '');
   const filters: ConversationFilters = {};
-  if (sp.get('resolution_status'))        filters.resolution_status        = sp.get('resolution_status')!;
-  if (sp.get('dissatisfaction_severity')) filters.dissatisfaction_severity = sp.get('dissatisfaction_severity')!;
-  if (sp.get('issue_category'))           filters.issue_category           = sp.get('issue_category')!;
-  if (sp.get('issue_item'))               filters.issue_item               = sp.get('issue_item')!;
-  if (sp.get('language'))                 filters.language                 = sp.get('language')!;
-  if (sp.get('brand'))                    filters.brand                    = sp.get('brand')!;
-  if (sp.get('agent_name'))               filters.agent_name               = sp.get('agent_name')!;
-  if (sp.get('account_manager'))          filters.account_manager          = sp.get('account_manager')!;
-  if (sp.get('vip_level'))                filters.vip_level                = sp.get('vip_level')!;
+  const setMulti = <K extends keyof ConversationFilters>(key: K, vals: string[]) => {
+    if (vals.length === 0) return;
+    // Keep single-value calls behaving identically to before by collapsing
+    // to a plain string when only one value was provided.
+    (filters as Record<string, unknown>)[key] = vals.length === 1 ? vals[0] : vals;
+  };
+  setMulti('resolution_status',        multi('resolution_status'));
+  setMulti('dissatisfaction_severity', multi('dissatisfaction_severity'));
+  setMulti('issue_category',           multi('issue_category'));
+  setMulti('issue_item',               multi('issue_item'));
+  setMulti('language',                 multi('language'));
+  setMulti('brand',                    multi('brand'));
+  setMulti('agent_name',               multi('agent_name'));
+  setMulti('account_manager',          multi('account_manager'));
+  setMulti('vip_level',                multi('vip_level'));
   if (sp.get('dateFrom'))                 filters.dateFrom                 = sp.get('dateFrom')!;
   if (sp.get('dateTo'))                   filters.dateTo                   = sp.get('dateTo')!;
   if (sp.get('analyzed') !== null && sp.get('analyzed') !== '')

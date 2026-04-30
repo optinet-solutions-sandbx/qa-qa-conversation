@@ -182,18 +182,34 @@ export function rowPassesCategoryIssueFilter(
 
 // ── DB-level filters ──────────────────────────────────────────────────────
 
+// brand / agent / accountManager accept either a single value or an array.
+// Single values keep the original `.eq()` / `.is(null)` semantics so the
+// drill-down's per-row filters keep behaving identically. Arrays are folded
+// into a single OR clause so the dashboard's multi-select combines values
+// inclusively at the DB level.
 export interface DbFilterInputs {
   dateFrom?: string | null;
   dateTo?:   string | null;
-  brand?:    string | null;
-  agent?:    string | null;
-  accountManager?: string | null;
+  brand?:    string | string[] | null;
+  agent?:    string | string[] | null;
+  accountManager?: string | string[] | null;
   // Asana ticketing filters (used by Report Page drill-downs).
   // asana_ticketed=true narrows to rows that currently have a live Asana task.
   // asana_status further narrows that set to open vs closed; setting it
   // implies asana_ticketed=true even when caller didn't pass it.
   asanaTicketed?: boolean;
   asanaStatus?:  'open' | 'closed';
+}
+
+function toArray(v: string | string[] | null | undefined): string[] {
+  if (v == null) return [];
+  return Array.isArray(v) ? v.filter((s) => s !== '') : (v ? [v] : []);
+}
+
+// PostgREST .or() syntax requires values that contain commas, parentheses or
+// special chars to be wrapped in double quotes; quote everything for safety.
+function pgrstQuote(v: string): string {
+  return `"${v.replace(/"/g, '\\"')}"`;
 }
 
 // Hard floor: the dashboard ignores everything before this date. The collected
@@ -218,24 +234,57 @@ export function applyConversationDbFilters(q: AnySupabaseQuery, f: DbFilterInput
     end.setUTCDate(end.getUTCDate() + 1);
     q = q.lt('intercom_created_at', end.toISOString());
   }
-  if (f.brand) {
-    if (f.brand.toLowerCase() === 'unknown') q = q.is('brand', null);
-    else                                     q = q.eq('brand', f.brand);
-  }
-  if (f.agent) {
-    if (f.agent.toLowerCase() === 'unknown') q = q.is('agent_name', null);
-    else                                     q = q.eq('agent_name', f.agent);
-  }
-  if (f.accountManager) {
-    const am = f.accountManager;
-    // Map AM display name → owned groups via GROUP_TO_AM so VIP/NON-VIP halves
-    // that resolve to different AMs (e.g. vip_koko=Koko, non-vip_koko=Geri/Nik)
-    // don't bleed into each other's results.
-    const amTags = am.toLowerCase() === 'softswiss'
-      ? ['group: softswiss🎲', 'group: softswiss dach', 'group: softswiss english', 'group: softswiss']
-      : getAmGroupsForFilter(am).map((g) => `group: ${g}🎲`);
-    const quotedTags = amTags.map((t) => `"${t}"`).join(',');
-    q = q.or(`account_manager.eq.${am},player_tags.ov.{${quotedTags}}`);
+  // Use Supabase's native .in() helper for the all-named case — passing the
+  // values as a JS array lets the client serialise them safely (handles names
+  // with spaces, commas, special chars). The .or() + in.() string form was
+  // dropping rows in practice because the embedded quotes didn't round-trip
+  // through URL encoding into PostgREST. Only fall back to .or() when the
+  // selection mixes "Unknown" (i.e. NULL) in with named values.
+  const applyMultiCol = (col: string, vals: string[]) => {
+    if (vals.length === 0) return;
+    const hasUnknown = vals.some((v) => v.toLowerCase() === 'unknown');
+    const named      = vals.filter((v) => v.toLowerCase() !== 'unknown');
+    if (named.length === 0) {
+      q = q.is(col, null);
+      return;
+    }
+    if (!hasUnknown) {
+      if (named.length === 1) {
+        q = q.eq(col, named[0]);
+      } else {
+        q = q.in(col, named);
+      }
+      return;
+    }
+    // Mixed: named values OR NULL.
+    q = q.or(`${col}.in.(${named.map(pgrstQuote).join(',')}),${col}.is.null`);
+  };
+
+  applyMultiCol('brand',      toArray(f.brand));
+  applyMultiCol('agent_name', toArray(f.agent));
+
+  const ams = toArray(f.accountManager);
+  if (ams.length > 0) {
+    // Map each AM display name → owned groups via GROUP_TO_AM so VIP/NON-VIP
+    // halves that resolve to different AMs (e.g. vip_koko=Koko,
+    // non-vip_koko=Geri/Nik) don't bleed into each other's results. Multiple
+    // AMs are unioned together — a row matching any selected AM passes.
+    const allTags = new Set<string>();
+    for (const am of ams) {
+      const tags = am.toLowerCase() === 'softswiss'
+        ? ['group: softswiss🎲', 'group: softswiss dach', 'group: softswiss english', 'group: softswiss']
+        : getAmGroupsForFilter(am).map((g) => `group: ${g}🎲`);
+      tags.forEach((t) => allTags.add(t));
+    }
+    // The AM block has to stay on .or() since it combines two columns
+    // (account_manager OR player_tags-overlap) into one disjunction. Quote
+    // each AM name individually to handle "Geri/Nik" and any name with a
+    // slash, comma or space.
+    const quotedTags  = [...allTags].map((t) => `"${t}"`).join(',');
+    const amInList    = `account_manager.in.(${ams.map(pgrstQuote).join(',')})`;
+    const tagOverlap  = quotedTags ? `player_tags.ov.{${quotedTags}}` : '';
+    const clauses     = [amInList, tagOverlap].filter(Boolean);
+    q = q.or(clauses.join(','));
   }
   // Mirror the row set that dbGetAsanaReportingMetrics uses: a "live" ticket
   // is one whose gid is set and whose task hasn't been deleted in Asana.

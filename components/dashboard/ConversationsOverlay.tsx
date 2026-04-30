@@ -7,7 +7,10 @@ import { getSegment, getVipLevel, getAccountManager, getBacklinkFull, parseSumma
 const INTERCOM_APP_ID = process.env.NEXT_PUBLIC_INTERCOM_APP_ID ?? '';
 
 interface Props {
-  filters: Record<string, string>;
+  // Each filter accepts a single value or multiple (multi-select). Multi-values
+  // are forwarded to /api/conversations as repeated query params, which the
+  // route reads via getAll() and the DB layer treats as an OR-set.
+  filters: Record<string, string | string[]>;
   title: string;
   onClose: () => void;
 }
@@ -29,7 +32,10 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
     setError(null);
     try {
       const params = new URLSearchParams({ page: String(p), perPage: String(PER_PAGE) });
-      Object.entries(filters).forEach(([k, v]) => { if (v) params.set(k, v); });
+      Object.entries(filters).forEach(([k, v]) => {
+        if (Array.isArray(v)) v.forEach((s) => { if (s) params.append(k, s); });
+        else if (v)           params.set(k, v);
+      });
       const res = await fetch(`/api/conversations?${params}`);
       if (!res.ok) throw new Error('Failed to load conversations');
       const data = await res.json();

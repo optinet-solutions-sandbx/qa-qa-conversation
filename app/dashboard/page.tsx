@@ -281,7 +281,7 @@ export default function DashboardPage() {
   const [error, setError]     = useState<string | null>(null);
 
   // Overlay state
-  const [overlayFilters, setOverlayFilters] = useState<Record<string, string> | null>(null);
+  const [overlayFilters, setOverlayFilters] = useState<Record<string, string | string[]> | null>(null);
   const [overlayTitle, setOverlayTitle]     = useState('');
 
   // Filters — date range always defaults to today on open. We deliberately don't
@@ -289,27 +289,31 @@ export default function DashboardPage() {
   // expects a fresh "today" view every time they open the dashboard.
   const [dateFrom, setDateFrom] = useState(() => flooredDate(todayISO()));
   const [dateTo, setDateTo]     = useState(() => flooredDate(todayISO()));
-  const [brand, setBrand]                     = useState('');
-  const [agent, setAgent]                     = useState('');
-  const [accountManager, setAccountManager]   = useState('');
-  const [vipLevel, setVipLevel]               = useState('');
-  const [language, setLanguage]               = useState('');
-  const [categories, setCategories]           = useState<string[]>([]);
-  const [issues, setIssues]                   = useState<string[]>([]);
-  const [severity, setSeverity]               = useState('');
+  const [brands, setBrands]                     = useState<string[]>([]);
+  const [agents, setAgents]                     = useState<string[]>([]);
+  const [accountManagers, setAccountManagers]   = useState<string[]>([]);
+  const [vipLevels, setVipLevels]               = useState<string[]>([]);
+  const [languages, setLanguages]               = useState<string[]>([]);
+  const [categories, setCategories]             = useState<string[]>([]);
+  const [issues, setIssues]                     = useState<string[]>([]);
+  const [severities, setSeverities]             = useState<string[]>([]);
 
   const navToConversations = useCallback((extra: Record<string, string>, e?: React.MouseEvent | MouseEvent) => {
-    const filters: Record<string, string> = {};
+    const filters: Record<string, string | string[]> = {};
     if (dateFrom)        filters.dateFrom        = dateFrom;
     if (dateTo)          filters.dateTo          = dateTo;
-    if (brand)           filters.brand           = brand;
-    if (agent)           filters.agent_name      = agent;
-    if (accountManager)  filters.account_manager = accountManager;
-    if (vipLevel)        filters.vip_level       = vipLevel;
-    if (language)        filters.language        = language;
-    if (categories.length === 1) filters.issue_category = categories[0];
-    if (issues.length === 1)     filters.issue_item     = issues[0];
-    if (severity)        filters.dissatisfaction_severity = `Level ${severity}`;
+    // Forward each multi-select as an array (or a plain string when exactly
+    // one value is selected). The overlay sends arrays through as repeated
+    // query params; /api/conversations reads them via getAll().
+    const passMulti = (key: string, vals: string[]) => { if (vals.length > 0) filters[key] = vals.length === 1 ? vals[0] : vals; };
+    passMulti('brand',           brands);
+    passMulti('agent_name',      agents);
+    passMulti('account_manager', accountManagers);
+    passMulti('vip_level',       vipLevels);
+    passMulti('language',        languages);
+    passMulti('issue_category',  categories);
+    passMulti('issue_item',      issues);
+    passMulti('dissatisfaction_severity', severities.map((s) => `Level ${s}`));
     Object.entries(extra).forEach(([k, v]) => { if (v) filters[k] = v; });
 
     // Build a human-readable title from the extra filters
@@ -335,7 +339,7 @@ export default function DashboardPage() {
     setOverlayTitle(title);
     setOverlayFilters(filters);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo, brand, agent, accountManager, vipLevel, language, categories, issues, severity]);
+  }, [dateFrom, dateTo, brands, agents, accountManagers, vipLevels, languages, categories, issues, severities]);
 
   // Restore overlay state from URL (used when a new tab is opened via Ctrl/middle-click)
   useEffect(() => {
@@ -357,14 +361,14 @@ export default function DashboardPage() {
     const params = new URLSearchParams();
     if (dateFrom)       params.set('dateFrom',       dateFrom);
     if (dateTo)         params.set('dateTo',         dateTo);
-    if (brand)          params.set('brand',          brand);
-    if (agent)          params.set('agent',          agent);
-    if (accountManager) params.set('accountManager', accountManager);
-    if (vipLevel)       params.set('vipLevel',       vipLevel);
-    if (language)       params.set('language',       language);
-    categories.forEach((c) => params.append('category', c));
-    issues.forEach((i) => params.append('issue', i));
-    if (severity)       params.set('severity',       severity);
+    brands.forEach((b)          => params.append('brand',          b));
+    agents.forEach((a)          => params.append('agent',          a));
+    accountManagers.forEach((m) => params.append('accountManager', m));
+    vipLevels.forEach((v)       => params.append('vipLevel',       v));
+    languages.forEach((l)       => params.append('language',       l));
+    categories.forEach((c)      => params.append('category',       c));
+    issues.forEach((i)          => params.append('issue',          i));
+    severities.forEach((s)      => params.append('severity',       s));
 
     const cacheKey = params.toString();
     const force = forceRef.current;
@@ -399,7 +403,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, brand, agent, accountManager, vipLevel, language, categories, issues, severity]);
+  }, [dateFrom, dateTo, brands, agents, accountManagers, vipLevels, languages, categories, issues, severities]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -469,71 +473,63 @@ export default function DashboardPage() {
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Brand</label>
-          <select
-            value={brand}
-            onChange={(e) => setBrand(e.target.value)}
-            className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All brands</option>
-            {brandOptions.map((b) => <option key={b} value={b}>{b}</option>)}
-          </select>
+          <MultiSelectFilter
+            options={brandOptions}
+            selected={brands}
+            onChange={setBrands}
+            placeholder="All brands"
+            emptyText="No brands yet"
+          />
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Agent</label>
-          <select
-            value={agent}
-            onChange={(e) => setAgent(e.target.value)}
-            className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All agents</option>
-            {agentOptions.map((a) => <option key={a} value={a}>{a}</option>)}
-          </select>
+          <MultiSelectFilter
+            options={agentOptions}
+            selected={agents}
+            onChange={setAgents}
+            placeholder="All agents"
+            emptyText="No agents yet"
+          />
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Account Manager</label>
-          <select
-            value={accountManager}
-            onChange={(e) => setAccountManager(e.target.value)}
-            className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All AMs</option>
-            {AM_NAMES.map((am) => <option key={am} value={am}>{am}</option>)}
-          </select>
+          <MultiSelectFilter
+            options={[...AM_NAMES]}
+            selected={accountManagers}
+            onChange={setAccountManagers}
+            placeholder="All AMs"
+            emptyText="No AMs"
+          />
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">VIP Level</label>
-          <select
-            value={vipLevel}
-            onChange={(e) => setVipLevel(e.target.value)}
-            className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All VIP levels</option>
-            {VIP_LEVELS.map((lvl) => <option key={lvl} value={lvl}>{lvl}</option>)}
-          </select>
+          <MultiSelectFilter
+            options={[...VIP_LEVELS]}
+            selected={vipLevels}
+            onChange={setVipLevels}
+            placeholder="All VIP levels"
+            emptyText="No VIP levels"
+          />
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Language</label>
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All languages</option>
-            {languageOptions.map((l) => <option key={l} value={l}>{l}</option>)}
-          </select>
+          <MultiSelectFilter
+            options={languageOptions}
+            selected={languages}
+            onChange={setLanguages}
+            placeholder="All languages"
+            emptyText="No languages yet"
+          />
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Severity</label>
-          <select
-            value={severity}
-            onChange={(e) => setSeverity(e.target.value)}
-            className="border border-slate-200 rounded-lg px-3 py-1.5 text-sm text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
-          >
-            <option value="">All severities</option>
-            <option value="1">Severity 1</option>
-            <option value="2">Severity 2</option>
-            <option value="3">Severity 3</option>
-          </select>
+          <MultiSelectFilter
+            options={['1', '2', '3']}
+            selected={severities}
+            onChange={setSeverities}
+            placeholder="All severities"
+            emptyText="No severities"
+          />
         </div>
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Category</label>
@@ -560,9 +556,9 @@ export default function DashboardPage() {
             disabled={categories.length === 0}
           />
         </div>
-        {(dateFrom || dateTo || brand || agent || accountManager || vipLevel || language || severity || categories.length > 0 || issues.length > 0) && (
+        {(dateFrom || dateTo || brands.length > 0 || agents.length > 0 || accountManagers.length > 0 || vipLevels.length > 0 || languages.length > 0 || severities.length > 0 || categories.length > 0 || issues.length > 0) && (
           <button
-            onClick={() => { setDateFrom(''); setDateTo(''); setBrand(''); setAgent(''); setAccountManager(''); setVipLevel(''); setLanguage(''); setSeverity(''); setCategories([]); setIssues([]); }}
+            onClick={() => { setDateFrom(''); setDateTo(''); setBrands([]); setAgents([]); setAccountManagers([]); setVipLevels([]); setLanguages([]); setSeverities([]); setCategories([]); setIssues([]); }}
             className="text-xs text-slate-400 hover:text-slate-600 underline pb-1.5"
           >
             Clear filters

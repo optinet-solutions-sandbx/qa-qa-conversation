@@ -419,16 +419,19 @@ export async function getConversationById(id: string): Promise<Conversation | nu
   return mapConversationRow(data);
 }
 
+// Multi-valued filters accept either a single string (single-select call sites
+// like the conversations list page URL) or a string[] (dashboard multi-select
+// drill-downs). The helpers below normalise both forms.
 export interface ConversationFilters {
-  resolution_status?: string;
-  dissatisfaction_severity?: string;
-  issue_category?: string;
-  issue_item?: string;
-  language?: string;
-  brand?: string;
-  agent_name?: string;
-  account_manager?: string;
-  vip_level?: string;
+  resolution_status?: string | string[];
+  dissatisfaction_severity?: string | string[];
+  issue_category?: string | string[];
+  issue_item?: string | string[];
+  language?: string | string[];
+  brand?: string | string[];
+  agent_name?: string | string[];
+  account_manager?: string | string[];
+  vip_level?: string | string[];
   dateFrom?: string;
   dateTo?: string;
   analyzed?: boolean;
@@ -437,14 +440,23 @@ export interface ConversationFilters {
   asana_status?: 'open' | 'closed';    // implies asana_ticketed=true
 }
 
+function asArray(v: string | string[] | undefined | null): string[] {
+  if (v == null) return [];
+  return Array.isArray(v) ? v.filter((s) => s !== '') : (v ? [v] : []);
+}
+
+function hasFilter(v: string | string[] | undefined | null): boolean {
+  return asArray(v).length > 0;
+}
+
 // vip_level isn't stored as a column — it's derived from player_tags /
 // player_segments / player_companies, so it has to be filtered in-memory the
 // same way the JSON-summary filters are. Routing it through the JSON-filter
 // path is what keeps that filtering off the simple loadConversations path.
 export function needsJsonFilter(filters: ConversationFilters): boolean {
-  return !!(filters.resolution_status || filters.dissatisfaction_severity ||
-            filters.issue_category    || filters.issue_item || filters.language ||
-            filters.vip_level);
+  return hasFilter(filters.resolution_status) || hasFilter(filters.dissatisfaction_severity) ||
+         hasFilter(filters.issue_category)    || hasFilter(filters.issue_item) ||
+         hasFilter(filters.language)          || hasFilter(filters.vip_level);
 }
 
 export async function loadConversations(
@@ -558,62 +570,76 @@ export async function loadConversationsWithJsonFilter(
   const parsedRows = allSlim.map((r) => ({ row: r, summary: parseAnalysisSummary(r.summary) }));
   let filtered = parsedRows;
 
-  if (filters.resolution_status) {
-    const v = filters.resolution_status.toLowerCase();
+  const resolutions = asArray(filters.resolution_status);
+  if (resolutions.length > 0) {
+    const targets = new Set(resolutions.map((v) => v.toLowerCase()));
+    const wantUnknown = targets.has('unknown');
     filtered = filtered.filter(({ summary }) => {
-      const val = summary.resolution_status?.trim();
-      return v === 'unknown' ? !val : val?.toLowerCase() === v;
+      const val = summary.resolution_status?.trim().toLowerCase();
+      if (!val) return wantUnknown;
+      return targets.has(val);
     });
   }
 
-  if (filters.dissatisfaction_severity) {
+  const sevs = asArray(filters.dissatisfaction_severity);
+  if (sevs.length > 0) {
     // Match against the normalised severity so a "Level 1" filter from the
     // dashboard matches rows whose raw stored value is "1", "Level 1", or
     // any other variant the AI has produced.  "Unknown" captures anything
     // that does not normalise to a 1/2/3 level, including legacy
     // Low/Medium/High/Critical values and rows with no severity at all.
-    const filterNorm = normalizeSeverity(filters.dissatisfaction_severity);
-    const filterIsUnknown = filters.dissatisfaction_severity.toLowerCase() === 'unknown' || !filterNorm;
+    const targets = new Set(sevs.map((v) => normalizeSeverity(v)).filter((s): s is string => !!s));
+    const wantUnknown = sevs.some((v) => v.toLowerCase() === 'unknown' || !normalizeSeverity(v));
     filtered = filtered.filter(({ summary }) => {
       const rowNorm = normalizeSeverity(summary.dissatisfaction_severity);
-      return filterIsUnknown ? !rowNorm : rowNorm === filterNorm;
+      if (!rowNorm) return wantUnknown;
+      return targets.has(rowNorm);
     });
   }
 
-  if (filters.language) {
-    const v = filters.language.toLowerCase();
+  const langs = asArray(filters.language);
+  if (langs.length > 0) {
+    const targets = new Set(langs.map((v) => v.toLowerCase()));
+    const wantUnknown = targets.has('unknown');
     filtered = filtered.filter(({ summary }) => {
-      const lang = summary.language?.trim();
-      return v === 'unknown' ? !lang : lang?.toLowerCase() === v;
+      const lang = summary.language?.trim().toLowerCase();
+      if (!lang) return wantUnknown;
+      return targets.has(lang);
     });
   }
 
-  if (filters.issue_category) {
+  const cats = asArray(filters.issue_category);
+  if (cats.length > 0) {
     // Same matcher the dashboard uses for its filteredRows count.
-    const matcher = buildCategoryMatcher([filters.issue_category]);
+    const matcher = buildCategoryMatcher(cats);
     filtered = filtered.filter(({ summary }) => summary.results.some((x) => matcher(x.category)));
   }
 
-  if (filters.issue_item) {
-    const matcher = buildIssueMatcher([filters.issue_item]);
+  const items = asArray(filters.issue_item);
+  if (items.length > 0) {
+    const matcher = buildIssueMatcher(items);
     filtered = filtered.filter(({ summary }) => summary.results.some((x) => matcher(x.item)));
   }
 
-  if (filters.vip_level) {
+  const vips = asArray(filters.vip_level);
+  if (vips.length > 0) {
     // The user's "highest level wins" rule lives inside getVipLevelNum, so
     // equality against the parsed filter value is the right semantics here:
     // a player tagged both L4 and L6 only matches when filtering for L6.
-    const target = parseVipLevelFilter(filters.vip_level);
-    if (target != null) {
-      filtered = filtered.filter(({ row }) => getVipLevelNum({
-        player_tags:              row.player_tags ?? [],
-        player_segments:          row.player_segments ?? [],
-        player_companies:         row.player_companies ?? [],
-        tags:                     row.tags ?? [],
-        player_custom_attributes: row.player_custom_attributes ?? null,
-      }) === target);
-    } else {
+    const targets = new Set(vips.map((v) => parseVipLevelFilter(v)).filter((n): n is number => n != null));
+    if (targets.size === 0) {
       filtered = [];
+    } else {
+      filtered = filtered.filter(({ row }) => {
+        const lvl = getVipLevelNum({
+          player_tags:              row.player_tags ?? [],
+          player_segments:          row.player_segments ?? [],
+          player_companies:         row.player_companies ?? [],
+          tags:                     row.tags ?? [],
+          player_custom_attributes: row.player_custom_attributes ?? null,
+        });
+        return lvl != null && targets.has(lvl);
+      });
     }
   }
 

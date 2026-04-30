@@ -36,14 +36,16 @@ export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const dateFrom       = searchParams.get('dateFrom');
   const dateTo         = searchParams.get('dateTo');
-  const brand          = searchParams.get('brand');
-  const agent          = searchParams.get('agent');
-  const accountManager = searchParams.get('accountManager');
+  // All filters are multi-value — single-value clients (e.g. drill-down overlay)
+  // can still send the same param once and it'll resolve to a single-element array.
+  const brands         = searchParams.getAll('brand');
+  const agents         = searchParams.getAll('agent');
+  const accountManagers = searchParams.getAll('accountManager');
   const categories     = searchParams.getAll('category');
   const issues         = searchParams.getAll('issue');
-  const severity       = searchParams.get('severity');
-  const language       = searchParams.get('language');
-  const vipLevel       = searchParams.get('vipLevel');
+  const severities     = searchParams.getAll('severity');
+  const languages      = searchParams.getAll('language');
+  const vipLevels      = searchParams.getAll('vipLevel');
 
   try {
     // Shared DB-level filter — the exact same helper is used by the drill-down
@@ -51,7 +53,10 @@ export async function GET(req: NextRequest) {
     // list counts in lock-step.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const applyFilters = (q: any) => applyConversationDbFilters(q, {
-      dateFrom, dateTo, brand, agent, accountManager,
+      dateFrom, dateTo,
+      brand:          brands,
+      agent:          agents,
+      accountManager: accountManagers,
     });
 
     // ── Overview counts ──────────────────────────────────────────────────
@@ -250,20 +255,25 @@ export async function GET(req: NextRequest) {
       filteredParsed = filteredParsed.filter((_, i) => keep[i]);
     }
 
-    const hasSeverityFilter = !!severity;
+    const hasSeverityFilter = severities.length > 0;
     if (hasSeverityFilter) {
-      const target = normalizeSeverity(severity);
-      const keep = filteredParsed.map((p) => normalizeSeverity(p.severity) === target);
+      const targets = new Set(severities.map((s) => normalizeSeverity(s)).filter((s): s is string => !!s));
+      const keep = filteredParsed.map((p) => {
+        const norm = normalizeSeverity(p.severity);
+        return norm != null && targets.has(norm);
+      });
       filteredRows   = filteredRows.filter((_, i) => keep[i]);
       filteredParsed = filteredParsed.filter((_, i) => keep[i]);
     }
 
-    const hasLanguageFilter = !!language;
+    const hasLanguageFilter = languages.length > 0;
     if (hasLanguageFilter) {
-      const target = language!.toLowerCase();
+      const targets = new Set(languages.map((l) => l.toLowerCase()));
+      const wantUnknown = targets.has('unknown');
       const keep = filteredParsed.map((p) => {
         const lang = p.language?.trim().toLowerCase();
-        return target === 'unknown' ? !lang : lang === target;
+        if (!lang) return wantUnknown;
+        return targets.has(lang);
       });
       filteredRows   = filteredRows.filter((_, i) => keep[i]);
       filteredParsed = filteredParsed.filter((_, i) => keep[i]);
@@ -271,10 +281,12 @@ export async function GET(req: NextRequest) {
 
     // VIP level: equality match against the precomputed (highest-wins) level so
     // a player tagged both L4 and L6 only appears under the L6 filter.
-    const hasVipLevelFilter = !!vipLevel;
+    const hasVipLevelFilter = vipLevels.length > 0;
     if (hasVipLevelFilter) {
-      const target = parseVipLevelFilter(vipLevel);
-      const keep = filteredParsed.map((p) => target != null && p.vip_level === target);
+      const targets = new Set(
+        vipLevels.map((v) => parseVipLevelFilter(v)).filter((n): n is number => n != null),
+      );
+      const keep = filteredParsed.map((p) => p.vip_level != null && targets.has(p.vip_level));
       filteredRows   = filteredRows.filter((_, i) => keep[i]);
       filteredParsed = filteredParsed.filter((_, i) => keep[i]);
     }
@@ -354,8 +366,12 @@ export async function GET(req: NextRequest) {
     // ── Conversations by date ────────────────────────────────────────────────
     // When a category filter is active we can't use the DB RPC (it has no category
     // param), so we group the already-filtered in-memory rows by CEST date instead.
+    // The RPC fast-path only takes a single brand/agent — when the user picks
+    // multiple values for either, fall back to the in-memory aggregation so the
+    // counts match the rest of the dashboard.
+    const dbFiltersAreMulti = brands.length > 1 || agents.length > 1 || accountManagers.length > 1;
     let conversationsByDate: { date: string; count: number }[];
-    if (hasCategoryFilter || hasIssueFilter || hasSeverityFilter || hasLanguageFilter || hasVipLevelFilter) {
+    if (hasCategoryFilter || hasIssueFilter || hasSeverityFilter || hasLanguageFilter || hasVipLevelFilter || dbFiltersAreMulti) {
       const dateCounts: Record<string, number> = {};
       for (const r of filteredRows) {
         const iso = r.intercom_created_at as string | null;
@@ -380,8 +396,8 @@ export async function GET(req: NextRequest) {
       const { data: dateAgg } = await supabase.rpc('get_conversations_by_cest_date', {
         p_date_from: rpcFromISO,
         p_date_to:   rpcToISO,
-        p_brand:     brand ?? null,
-        p_agent:     agent ?? null,
+        p_brand:     brands[0] ?? null,
+        p_agent:     agents[0] ?? null,
       }) as { data: Array<{ cest_date: string; conversation_count: number }> | null };
       conversationsByDate = (dateAgg ?? []).map((r) => ({
         date:  r.cest_date,
@@ -438,7 +454,7 @@ export async function GET(req: NextRequest) {
     // When a category filter is active, the DB-level counts are global (the RPC
     // has no category param).  Use the in-memory filtered counts instead so the
     // stat cards reflect what the charts show.
-    const hasInMemoryFilter = hasCategoryFilter || hasIssueFilter || hasSeverityFilter || hasLanguageFilter || hasVipLevelFilter;
+    const hasInMemoryFilter = hasCategoryFilter || hasIssueFilter || hasSeverityFilter || hasLanguageFilter || hasVipLevelFilter || dbFiltersAreMulti;
     const overviewAnalyzed  = hasInMemoryFilter ? filteredRows.length  : analyzed;
     const overviewAlertWorthy = hasInMemoryFilter
       ? filteredRows.filter((r) => r.is_alert_worthy).length

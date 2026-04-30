@@ -204,13 +204,20 @@ export default function ConversationList({ filters }: { filters?: ConversationFi
     setSelected(new Set());
     try {
       const params = new URLSearchParams({ page: String(p), perPage: String(PER_PAGE) });
-      if (filters?.resolution_status)        params.set('resolution_status',        filters.resolution_status);
-      if (filters?.dissatisfaction_severity) params.set('dissatisfaction_severity', filters.dissatisfaction_severity);
-      if (filters?.issue_category)           params.set('issue_category',           filters.issue_category);
-      if (filters?.language)                 params.set('language',                 filters.language);
-      if (filters?.brand)                    params.set('brand',                    filters.brand);
-      if (filters?.agent_name)               params.set('agent_name',               filters.agent_name);
-      if (filters?.account_manager)          params.set('account_manager',          filters.account_manager);
+      // Multi-value filter fields may come through as either a single string
+      // (URL-driven page nav) or a string[] (programmatic multi-select).
+      const appendMulti = (key: string, v: string | string[] | undefined) => {
+        if (v == null) return;
+        if (Array.isArray(v)) v.forEach((s) => { if (s) params.append(key, s); });
+        else if (v)           params.set(key, v);
+      };
+      appendMulti('resolution_status',        filters?.resolution_status);
+      appendMulti('dissatisfaction_severity', filters?.dissatisfaction_severity);
+      appendMulti('issue_category',           filters?.issue_category);
+      appendMulti('language',                 filters?.language);
+      appendMulti('brand',                    filters?.brand);
+      appendMulti('agent_name',               filters?.agent_name);
+      appendMulti('account_manager',          filters?.account_manager);
       if (filters?.dateFrom)                 params.set('dateFrom',                 filters.dateFrom);
       if (filters?.dateTo)                   params.set('dateTo',                   filters.dateTo);
       if (filters?.analyzed !== undefined)   params.set('analyzed',                 String(filters.analyzed));
