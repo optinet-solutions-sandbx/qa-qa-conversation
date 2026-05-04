@@ -84,7 +84,7 @@ export async function GET(req: NextRequest) {
       const { data: page } = await applyFilters(
         supabase
           .from('conversations')
-          .select('id, summary, brand, agent_name, is_alert_worthy, intercom_created_at, language, resolution_status, dissatisfaction_severity, player_tags, player_segments, player_companies, tags, player_custom_attributes')
+          .select('id, summary, brand, agent_name, is_alert_worthy, intercom_created_at, language, resolution_status, dissatisfaction_severity, player_tags, player_segments, player_companies, tags, player_custom_attributes, analyzed_at, asana_task_gid, asana_completed_at, asana_task_deleted_at')
           .not('summary', 'is', null)
           .order('intercom_created_at', { ascending: false })
           .order('id', { ascending: false })
@@ -339,10 +339,12 @@ export async function GET(req: NextRequest) {
       if (!categoryMap[key]) categoryMap[key] = { count: 0, label: c };
       categoryMap[key].count++;
     }
+    // Renamed UI-side to "Category Breakdown" — the spec asks for all
+    // categories (no top-10 cap) since this widget lives in the lower
+    // analytics section as a full breakdown.
     const topCategories = Object.values(categoryMap)
       .filter(({ label }) => !EXCLUDED_CATEGORY_PREFIXES.has(numPrefix(label)))
       .sort((a, b) => b.count - a.count)
-      .slice(0, 10)
       .map(({ label, count }) => ({ label, count }));
 
     // ── Top issue items ──────────────────────────────────────────────────
@@ -360,9 +362,11 @@ export async function GET(req: NextRequest) {
       itemAgg[key].count++;
       itemAgg[key].labelCounts[clean] = (itemAgg[key].labelCounts[clean] ?? 0) + 1;
     }
+    // Renamed UI-side to "Issues Breakdown" — the spec asks for the full
+    // ordered list of issues (no top-10 cap). This is the last widget in the
+    // lower analytics section, sized to handle long lists with internal scroll.
     const topItems = Object.values(itemAgg)
       .sort((a, b) => b.count - a.count)
-      .slice(0, 10)
       .map(({ count, category, labelCounts }) => {
         const [label] = Object.entries(labelCounts).sort((a, b) => b[1] - a[1])[0];
         return { label, count, category };
@@ -379,6 +383,371 @@ export async function GET(req: NextRequest) {
       filteredRows,
       (r) => (r.agent_name as string | null)
     );
+
+    // ── Escalation stats (Asana) ─────────────────────────────────────────
+    // A "live" escalation is a conversation with an Asana task that hasn't been
+    // deleted in Asana — same row set used by dbGetAsanaReportingMetrics so the
+    // dashboard cards line up with the Report Page totals.
+    // - Open vs Resolved is determined by asana_completed_at (set by the cron
+    //   sync when an AM closes the Asana task).
+    // - Pending <24h vs >24h splits the OPEN bucket by ticket age (now -
+    //   analyzed_at, since analyzed_at is what the existing reporting helper
+    //   uses as a stand-in for ticket creation time).
+    const NOW_MS = Date.now();
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const escalatedRows = filteredRows.filter(
+      (r) => r.asana_task_gid != null && r.asana_task_deleted_at == null,
+    );
+    const totalEscalations = escalatedRows.length;
+    const resolvedEscalations = escalatedRows.filter((r) => r.asana_completed_at != null).length;
+    let pendingUnder24h = 0;
+    let pendingOver24h = 0;
+    for (const r of escalatedRows) {
+      if (r.asana_completed_at != null) continue;
+      const created = r.analyzed_at as string | null;
+      const ageMs = created ? NOW_MS - new Date(created).getTime() : Infinity;
+      if (ageMs < DAY_MS) pendingUnder24h += 1;
+      else                pendingOver24h  += 1;
+    }
+    const closureRate = totalEscalations > 0
+      ? Math.round((resolvedEscalations / totalEscalations) * 100)
+      : 0;
+    const escalationStats = {
+      totalEscalations,
+      resolved: resolvedEscalations,
+      pendingUnder24h,
+      pendingOver24h,
+      closureRate,
+    };
+
+    // ── Top 5 Issue Spikes — fixed window, ignores all filters ───────────
+    // Compares the two most recent COMPLETED UTC days (so today's partial day
+    // is excluded). The bars in the UI are labelled "Today" (= the more recent
+    // completed day) and "Yesterday" (= the day before). Per the spec this
+    // widget is permanently fixed and never honours dateFrom/dateTo or any of
+    // the brand/agent/segment/severity/category/issue filters — it's an
+    // operational early-warning view of the last 24h vs the previous 24h.
+    const utcStartOfToday = new Date();
+    utcStartOfToday.setUTCHours(0, 0, 0, 0);
+    const dayNStartUTC = new Date(utcStartOfToday); dayNStartUTC.setUTCDate(dayNStartUTC.getUTCDate() - 1);
+    const dayNm1StartUTC = new Date(utcStartOfToday); dayNm1StartUTC.setUTCDate(dayNm1StartUTC.getUTCDate() - 2);
+    const dayNStrISO = dayNStartUTC.toISOString().slice(0, 10);
+
+    const spikeRows: Array<{ summary: string | null; intercom_created_at: string }> = [];
+    {
+      let spikeFrom = 0;
+      while (true) {
+        const { data: page } = await supabase
+          .from('conversations')
+          .select('summary, intercom_created_at')
+          .not('summary', 'is', null)
+          .gte('intercom_created_at', dayNm1StartUTC.toISOString())
+          .lt ('intercom_created_at', utcStartOfToday.toISOString())
+          .order('intercom_created_at', { ascending: false })
+          .range(spikeFrom, spikeFrom + PAGE_SIZE - 1) as {
+            data: Array<{ summary: string | null; intercom_created_at: string }> | null;
+          };
+        if (!page || page.length === 0) break;
+        spikeRows.push(...page);
+        if (page.length < PAGE_SIZE) break;
+        spikeFrom += PAGE_SIZE;
+      }
+    }
+
+    type SpikeAgg = { label: string; today: number; yesterday: number; labelCounts: Record<string, number> };
+    const spikeAgg: Record<string, SpikeAgg> = {};
+    for (const r of spikeRows) {
+      const isDayN = r.intercom_created_at.slice(0, 10) === dayNStrISO;
+      const summary = parseAnalysisSummary(r.summary);
+      // Dedup per row: a single conversation flagging the same issue twice
+      // shouldn't double-count — matches how topItems is computed.
+      const seenKeys = new Set<string>();
+      for (const it of summary.results) {
+        const clean = stripItemNum(it.item ?? '');
+        if (!clean) continue;
+        const key = normalizeIssueKey(clean);
+        if (seenKeys.has(key)) continue;
+        seenKeys.add(key);
+        if (!spikeAgg[key]) spikeAgg[key] = { label: clean, today: 0, yesterday: 0, labelCounts: {} };
+        if (isDayN) spikeAgg[key].today += 1;
+        else        spikeAgg[key].yesterday += 1;
+        spikeAgg[key].labelCounts[clean] = (spikeAgg[key].labelCounts[clean] ?? 0) + 1;
+      }
+    }
+    const issueSpikes = Object.values(spikeAgg)
+      // Surface the issues with the biggest movement first — abs(delta) catches
+      // both spikes (today >> yesterday) and drops (yesterday >> today). Ties
+      // are broken by today's count so a busy issue beats a quiet one.
+      .sort((a, b) => {
+        const aDelta = Math.abs(a.today - a.yesterday);
+        const bDelta = Math.abs(b.today - b.yesterday);
+        if (aDelta !== bDelta) return bDelta - aDelta;
+        return b.today - a.today;
+      })
+      .slice(0, 5)
+      .map(({ today, yesterday, labelCounts }) => {
+        const [bestLabel] = Object.entries(labelCounts).sort((a, b) => b[1] - a[1])[0];
+        return { issue: bestLabel, today, yesterday };
+      });
+
+    // ── Wider 30-day load: powers Weekly + Daily/Hourly Heat Maps and Trend ──
+    // These widgets have time semantics independent of the global dateFrom/dateTo
+    // (Weekly is fixed last 7 days, others default to 30 days), so they need
+    // their own load. Brand/agent/AM still apply at the DB level; the in-memory
+    // filters below mirror what the main pipeline does for filteredParsed.
+    const widerEndUTC = new Date();
+    widerEndUTC.setUTCHours(0, 0, 0, 0);
+    widerEndUTC.setUTCDate(widerEndUTC.getUTCDate() + 1); // exclusive: start of tomorrow UTC
+    const widerStartUTC = new Date(widerEndUTC);
+    widerStartUTC.setUTCDate(widerStartUTC.getUTCDate() - 31); // 30 inclusive days
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applyWiderDbFilters = (q: any) => applyConversationDbFilters(q, {
+      dateFrom: widerStartUTC.toISOString(),
+      brand:          brands,
+      agent:          agents,
+      accountManager: accountManagers,
+    });
+
+    const widerDbRows: Array<Record<string, unknown>> = [];
+    {
+      let idx = 0;
+      while (true) {
+        const { data: page } = await applyWiderDbFilters(
+          supabase
+            .from('conversations')
+            .select('id, summary, language, intercom_created_at, dissatisfaction_severity, player_tags, player_segments, player_companies, tags, player_custom_attributes')
+            .not('summary', 'is', null)
+            .lt('intercom_created_at', widerEndUTC.toISOString())
+            .order('intercom_created_at', { ascending: false })
+            .order('id', { ascending: false })
+            .range(idx, idx + PAGE_SIZE - 1)
+        ) as { data: Array<Record<string, unknown>> | null };
+        if (!page || page.length === 0) break;
+        widerDbRows.push(...page);
+        if (page.length < PAGE_SIZE) break;
+        idx += PAGE_SIZE;
+      }
+    }
+    const seenWiderIds = new Set<string>();
+    const widerRows = widerDbRows.filter((r) => {
+      const id = r.id as string | undefined;
+      if (!id || seenWiderIds.has(id)) return false;
+      seenWiderIds.add(id);
+      return true;
+    });
+
+    type WiderParsed = {
+      iso: string;
+      severity: string | null;
+      language: string | null;
+      vip_level: number | null;
+      segment: 'VIP' | 'NON-VIP' | 'SoftSwiss' | null;
+      categories: string[];
+      items: { category: string; item: string }[];
+    };
+    const widerParsed: WiderParsed[] = widerRows.map((r) => {
+      const summary = parseAnalysisSummary(r.summary as string | null);
+      const playerAttrs = {
+        player_tags:              (r.player_tags as string[] | null) ?? [],
+        player_segments:          (r.player_segments as string[] | null) ?? [],
+        player_companies:         (r.player_companies as { name: string }[] | null) ?? [],
+        tags:                     (r.tags as string[] | null) ?? [],
+        player_custom_attributes: (r.player_custom_attributes as Record<string, unknown> | null) ?? null,
+      };
+      return {
+        iso: (r.intercom_created_at as string | null) ?? '',
+        severity: (r.dissatisfaction_severity as string | null) ?? summary.dissatisfaction_severity ?? null,
+        language: (r.language as string | null) ?? summary.language ?? null,
+        vip_level: getVipLevelNum(playerAttrs),
+        segment:   getSegment(playerAttrs),
+        categories: summary.results.map((x) => displayCategory(x.category ?? 'Unknown')),
+        items: summary.results.map((x) => ({ category: displayCategory(x.category ?? 'Unknown'), item: x.item ?? 'Unknown' })),
+      };
+    });
+
+    // Apply the same in-memory filters the main pipeline does. Category/issue
+    // are included because the spec says "all graphs must reflect only that
+    // selection" when those filters are active.
+    let widerFiltered = widerParsed;
+    if (hasCategoryFilter) widerFiltered = widerFiltered.filter((p) => p.categories.some((c) => matchesCategory(c)));
+    if (hasIssueFilter)    widerFiltered = widerFiltered.filter((p) => p.items.some((x) => matchesIssue(x.item)));
+    if (hasSeverityFilter) {
+      const targets = new Set(severities.map((s) => normalizeSeverity(s)).filter((s): s is string => !!s));
+      widerFiltered = widerFiltered.filter((p) => {
+        const norm = normalizeSeverity(p.severity);
+        return norm != null && targets.has(norm);
+      });
+    }
+    if (hasLanguageFilter) {
+      const targets = new Set(languages.map((l) => l.toLowerCase()));
+      const wantUnknown = targets.has('unknown');
+      widerFiltered = widerFiltered.filter((p) => {
+        const lang = p.language?.trim().toLowerCase();
+        if (!lang) return wantUnknown;
+        return targets.has(lang);
+      });
+    }
+    if (hasSegmentFilter) {
+      const targets = new Set(segments.map((s) => parseSegmentFilter(s)).filter((s): s is 'VIP' | 'NON-VIP' | 'SoftSwiss' => s != null));
+      widerFiltered = widerFiltered.filter((p) => p.segment != null && targets.has(p.segment));
+    }
+    if (hasVipLevelFilter) {
+      const targets = new Set(vipLevels.map((v) => parseVipLevelFilter(v)).filter((n): n is number => n != null));
+      widerFiltered = widerFiltered.filter((p) => p.vip_level != null && targets.has(p.vip_level));
+    }
+
+    // ── Date axes for the wider widgets ──────────────────────────────────
+    const days30: string[] = (() => {
+      const out: string[] = [];
+      const start = new Date(); start.setUTCHours(0, 0, 0, 0); start.setUTCDate(start.getUTCDate() - 29);
+      const end   = new Date(); end.setUTCHours(0, 0, 0, 0);
+      for (const cur = new Date(start); cur <= end; cur.setUTCDate(cur.getUTCDate() + 1)) {
+        out.push(cur.toISOString().slice(0, 10));
+      }
+      return out;
+    })();
+    const days7 = days30.slice(-7);
+
+    // ── Dissatisfaction Trend (top issues that cause dissatisfaction, 30d) ──
+    // Only conversations with a non-null severity contribute (those flagged by
+    // the AI as showing user dissatisfaction). We pick the top 3 issues from
+    // the dissatisfied subset and emit per-day counts for each — matches the
+    // 3-line line chart shown in the spec mockup.
+    const dissatisfiedRows = widerFiltered.filter((p) => normalizeSeverity(p.severity) != null);
+    const dissatisfactionIssueAgg: Record<string, { label: string; total: number; perDate: Record<string, number>; labelCounts: Record<string, number> }> = {};
+    for (const p of dissatisfiedRows) {
+      const dateStr = p.iso.slice(0, 10);
+      if (!dateStr) continue;
+      const seen = new Set<string>();
+      for (const it of p.items) {
+        if (it.item === 'Unknown') continue;
+        const clean = stripItemNum(it.item);
+        if (!clean) continue;
+        const key = normalizeIssueKey(clean);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (!dissatisfactionIssueAgg[key]) dissatisfactionIssueAgg[key] = { label: clean, total: 0, perDate: {}, labelCounts: {} };
+        dissatisfactionIssueAgg[key].total += 1;
+        dissatisfactionIssueAgg[key].perDate[dateStr] = (dissatisfactionIssueAgg[key].perDate[dateStr] ?? 0) + 1;
+        dissatisfactionIssueAgg[key].labelCounts[clean] = (dissatisfactionIssueAgg[key].labelCounts[clean] ?? 0) + 1;
+      }
+    }
+    const trendTopN = hasIssueFilter ? Object.keys(dissatisfactionIssueAgg).length : 3;
+    const trendTopIssues = Object.values(dissatisfactionIssueAgg)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, trendTopN)
+      .map(({ labelCounts, perDate }) => {
+        const [bestLabel] = Object.entries(labelCounts).sort((a, b) => b[1] - a[1])[0];
+        return { issue: bestLabel, perDate };
+      });
+    const trendDataAllDays = days30.map((date) => {
+      const row: Record<string, string | number> = { date };
+      for (const t of trendTopIssues) row[t.issue] = t.perDate[date] ?? 0;
+      return row;
+    });
+    // Trim leading dates where every series is zero. The 30-day window often
+    // straddles the analysis cutoff (ANALYSIS_MIN_DATE_ISO), so the early
+    // days have no data and rendering them creates a long flat segment.
+    const firstNonZero = trendDataAllDays.findIndex((row) =>
+      trendTopIssues.some((t) => (row[t.issue] as number) > 0),
+    );
+    const dissatisfactionTrend = {
+      issues: trendTopIssues.map((t) => t.issue),
+      data: firstNonZero <= 0 ? trendDataAllDays : trendDataAllDays.slice(firstNonZero),
+    };
+
+    // ── Weekly Issue Heat Map (top 5 issues × last 7 days) ──────────────
+    const weeklyAgg: Record<string, { label: string; total: number; perDate: Record<string, number>; labelCounts: Record<string, number> }> = {};
+    const last7 = new Set(days7);
+    for (const p of widerFiltered) {
+      const dateStr = p.iso.slice(0, 10);
+      if (!dateStr || !last7.has(dateStr)) continue;
+      const seen = new Set<string>();
+      for (const it of p.items) {
+        if (it.item === 'Unknown') continue;
+        const clean = stripItemNum(it.item);
+        if (!clean) continue;
+        const key = normalizeIssueKey(clean);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (!weeklyAgg[key]) weeklyAgg[key] = { label: clean, total: 0, perDate: {}, labelCounts: {} };
+        weeklyAgg[key].total += 1;
+        weeklyAgg[key].perDate[dateStr] = (weeklyAgg[key].perDate[dateStr] ?? 0) + 1;
+        weeklyAgg[key].labelCounts[clean] = (weeklyAgg[key].labelCounts[clean] ?? 0) + 1;
+      }
+    }
+    const weeklyTopN = hasIssueFilter ? Object.keys(weeklyAgg).length : 5;
+    const weeklyTop = Object.values(weeklyAgg)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, weeklyTopN)
+      .map(({ labelCounts, perDate }) => {
+        const [bestLabel] = Object.entries(labelCounts).sort((a, b) => b[1] - a[1])[0];
+        return {
+          issue: bestLabel,
+          counts: days7.map((d) => perDate[d] ?? 0),
+        };
+      });
+    const dayOfWeekLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const weeklyIssueHeatmap = {
+      days: days7.map((d) => ({
+        date: d,
+        label: dayOfWeekLabels[new Date(d + 'T00:00:00Z').getUTCDay()],
+      })),
+      issues: weeklyTop,
+    };
+
+    // ── Daily & Hourly Issue Heat Map (last 30 days × 24 hours) ────────
+    // Top 5 issues over the 30-day window (or selected issues if filter active),
+    // counts per (date, hour) summed across those issues at the conversation
+    // level — a chat that flags multiple top-5 issues counts once per cell.
+    const issueTotalAgg: Record<string, { total: number }> = {};
+    for (const p of widerFiltered) {
+      const seen = new Set<string>();
+      for (const it of p.items) {
+        if (it.item === 'Unknown') continue;
+        const clean = stripItemNum(it.item);
+        if (!clean) continue;
+        const key = normalizeIssueKey(clean);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (!issueTotalAgg[key]) issueTotalAgg[key] = { total: 0 };
+        issueTotalAgg[key].total += 1;
+      }
+    }
+    const dailyHourlyTopKeys = new Set(
+      Object.entries(issueTotalAgg)
+        .sort(([, a], [, b]) => b.total - a.total)
+        .slice(0, hasIssueFilter ? Object.keys(issueTotalAgg).length : 5)
+        .map(([k]) => k)
+    );
+    const dailyHourlyCells: Record<string, number> = {};
+    for (const p of widerFiltered) {
+      if (!p.iso) continue;
+      const dateStr = p.iso.slice(0, 10);
+      const hour = new Date(p.iso).getUTCHours();
+      const flagsTop = p.items.some((it) => {
+        if (it.item === 'Unknown') return false;
+        const key = normalizeIssueKey(stripItemNum(it.item));
+        return dailyHourlyTopKeys.has(key);
+      });
+      if (!flagsTop) continue;
+      const cellKey = `${dateStr}|${hour}`;
+      dailyHourlyCells[cellKey] = (dailyHourlyCells[cellKey] ?? 0) + 1;
+    }
+    const allDailyHourlyCells = Object.entries(dailyHourlyCells).map(([k, count]) => {
+      const [date, hourStr] = k.split('|');
+      return { date, hour: parseInt(hourStr, 10), count };
+    });
+    // Trim leading dates that have no cells at all — same reason as the
+    // trend chart: the 30-day window straddles the analysis cutoff and
+    // empty rows above the data make the grid look broken.
+    const datesWithData = new Set(allDailyHourlyCells.map((c) => c.date));
+    const firstDailyIdx = days30.findIndex((d) => datesWithData.has(d));
+    const dailyHourlyIssueHeatmap = {
+      dates: firstDailyIdx <= 0 ? days30 : days30.slice(firstDailyIdx),
+      cells: allDailyHourlyCells,
+    };
 
     // ── Conversations by date ────────────────────────────────────────────────
     // When a category filter is active we can't use the DB RPC (it has no category
@@ -489,6 +858,11 @@ export async function GET(req: NextRequest) {
         alertWorthy: overviewAlertWorthy,
         analyzedPct: overviewTotal > 0 ? Math.round((overviewAnalyzed / overviewTotal) * 100) : 0,
       },
+      escalationStats,
+      issueSpikes,
+      dissatisfactionTrend,
+      weeklyIssueHeatmap,
+      dailyHourlyIssueHeatmap,
       resolutionBreakdown,
       severityBreakdown,
       topCategories,

@@ -70,3 +70,9 @@ html.dark select {
 }
 html.dark textarea::placeholder,
 html.dark input::placeholder { color: #6b7892; }
+
+/* Heat-map empty-cell baseline (consumed via CSS var by IssueHeatmap). In dark
+   mode we want empty cells to nearly disappear into the panel background so
+   the populated cells visually dominate. */
+:root      { --heatmap-empty: #f1f5f9; }
+html.dark  { --heatmap-empty: #1c2336; }

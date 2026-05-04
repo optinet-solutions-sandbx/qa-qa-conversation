@@ -2,10 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ConversationsOverlay from '@/components/dashboard/ConversationsOverlay';
+import IssueHeatmap from '@/components/dashboard/IssueHeatmap';
 import { AM_NAMES, SEGMENTS, VIP_LEVELS } from '@/lib/utils';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line,
+  PieChart, Pie, Cell, LineChart, Line, Legend, AreaChart, Area,
 } from 'recharts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -22,8 +23,38 @@ interface LabelCount { label: string; count: number; }
 interface ItemCount  { label: string; count: number; category: string; }
 interface DateCount  { date: string; count: number; }
 
+interface EscalationStats {
+  totalEscalations: number;
+  resolved: number;
+  pendingUnder24h: number;
+  pendingOver24h: number;
+  closureRate: number;
+}
+
+interface IssueSpike { issue: string; today: number; yesterday: number; }
+
+interface DissatisfactionTrend {
+  issues: string[];
+  data: Array<{ date: string } & Record<string, number | string>>;
+}
+
+interface WeeklyIssueHeatmap {
+  days: { date: string; label: string }[];
+  issues: { issue: string; counts: number[] }[];
+}
+
+interface DailyHourlyIssueHeatmap {
+  dates: string[];
+  cells: { date: string; hour: number; count: number }[];
+}
+
 interface DashboardData {
   overview: Overview;
+  escalationStats: EscalationStats;
+  issueSpikes: IssueSpike[];
+  dissatisfactionTrend: DissatisfactionTrend;
+  weeklyIssueHeatmap: WeeklyIssueHeatmap;
+  dailyHourlyIssueHeatmap: DailyHourlyIssueHeatmap;
   resolutionBreakdown: LabelCount[];
   severityBreakdown: LabelCount[];
   topCategories: LabelCount[];
@@ -75,24 +106,27 @@ function setCached(key: string, data: DashboardData) {
 }
 
 // ── Colour palette ─────────────────────────────────────────────────────────
+// Saturated/neon palette designed for the dark theme mockup. Hex values are
+// chosen so each colour also reads well against a white surface (light mode).
 
-const COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '#06b6d4', '#f97316', '#84cc16'];
+const COLORS = ['#22d3ee', '#a78bfa', '#f472b6', '#fb923c', '#facc15', '#34d399', '#60a5fa', '#f87171'];
 
 const RESOLUTION_COLORS: Record<string, string> = {
-  Resolved:            '#22c55e',
-  'Partially Resolved': '#f59e0b',
-  Unresolved:          '#ef4444',
+  Resolved:            '#22d3ee', // cyan
+  'Partially Resolved': '#fb923c', // orange
+  Unresolved:          '#f472b6', // pink
+  Unknown:             '#facc15', // yellow
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
-  'Level 1': '#22c55e',
-  'Level 2': '#f59e0b',
-  'Level 3': '#ef4444',
+  'Level 1': '#22d3ee', // cyan
+  'Level 2': '#fb923c', // orange
+  'Level 3': '#f472b6', // pink
   Unknown:   '#94a3b8',
-  Low:       '#22c55e',
-  Medium:    '#f59e0b',
+  Low:       '#22d3ee',
+  Medium:    '#fb923c',
   High:      '#f97316',
-  Critical:  '#ef4444',
+  Critical:  '#f472b6',
 };
 
 const OVERLAY_LABELS: Record<string, string> = {
@@ -128,26 +162,93 @@ function isNewTabClick(e?: { ctrlKey?: boolean; metaKey?: boolean; button?: numb
 
 // ── Stat card ──────────────────────────────────────────────────────────────
 
-function StatCard({ label, value, sub, color, onClick }: { label: string; value: string | number; sub?: string; color?: string; onClick?: (e: React.MouseEvent) => void }) {
+type StatAccent = 'cyan' | 'teal' | 'amber' | 'rose' | 'violet';
+
+// Per-accent colour tokens. Hex literals are intentional — Tailwind purges
+// dynamic class names, so we pass colours through inline style/SVG props
+// instead of constructing classes like `border-${accent}-500`.
+const ACCENT_TOKENS: Record<StatAccent, { border: string; iconBg: string; iconStroke: string; valueText: string }> = {
+  cyan:   { border: 'border-cyan-400/40   ring-cyan-400/10',   iconBg: 'bg-cyan-400/15',   iconStroke: '#22d3ee', valueText: 'text-cyan-300' },
+  teal:   { border: 'border-emerald-400/40 ring-emerald-400/10', iconBg: 'bg-emerald-400/15', iconStroke: '#34d399', valueText: 'text-emerald-300' },
+  amber:  { border: 'border-amber-400/40  ring-amber-400/10',  iconBg: 'bg-amber-400/15',  iconStroke: '#fbbf24', valueText: 'text-amber-300' },
+  rose:   { border: 'border-rose-400/40   ring-rose-400/10',   iconBg: 'bg-rose-400/15',   iconStroke: '#fb7185', valueText: 'text-rose-300' },
+  violet: { border: 'border-violet-400/40 ring-violet-400/10', iconBg: 'bg-violet-400/15', iconStroke: '#a78bfa', valueText: 'text-violet-300' },
+};
+
+function StatIcon({ kind, color }: { kind: 'doc' | 'check' | 'clock' | 'alarm'; color: string }) {
+  const common = { fill: 'none', stroke: color, strokeWidth: 1.8, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, viewBox: '0 0 24 24', className: 'w-5 h-5' };
+  switch (kind) {
+    case 'doc':   return <svg {...common}><path d="M14 3v4a1 1 0 0 0 1 1h4M5 21h14a2 2 0 0 0 2-2V7l-4-4H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2Z" /><path d="M8 12h8M8 16h6" /></svg>;
+    case 'check': return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M8.5 12.5l2.5 2.5 4.5-5" /></svg>;
+    case 'clock': return <svg {...common}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3.5 2" /></svg>;
+    case 'alarm': return <svg {...common}><circle cx="12" cy="13" r="8" /><path d="M12 9v4l2.5 1.5M5 4l3 2.5M19 4l-3 2.5" /></svg>;
+  }
+}
+
+// Mini progress donut for the Closure Rate card. Pure SVG so it inherits the
+// stat-card colour scheme and doesn't pull recharts in just for this.
+function MiniDonut({ pct, color }: { pct: number; color: string }) {
+  const r = 22, c = 2 * Math.PI * r;
+  const safe = Math.max(0, Math.min(100, pct));
+  return (
+    <svg viewBox="0 0 56 56" className="w-12 h-12">
+      <circle cx="28" cy="28" r={r} fill="none" stroke="currentColor" strokeWidth="6" className="text-slate-200 dark:text-slate-700" />
+      <circle
+        cx="28" cy="28" r={r} fill="none" stroke={color} strokeWidth="6" strokeLinecap="round"
+        strokeDasharray={c}
+        strokeDashoffset={c - (c * safe / 100)}
+        transform="rotate(-90 28 28)"
+      />
+    </svg>
+  );
+}
+
+interface StatCardProps {
+  label: string;
+  value: string | number;
+  sub?: string;
+  accent: StatAccent;
+  icon?: 'doc' | 'check' | 'clock' | 'alarm';
+  /** When provided, replaces the icon block with a progress donut. */
+  donutPct?: number;
+  onClick?: (e: React.MouseEvent) => void;
+}
+
+function StatCard({ label, value, sub, accent, icon, donutPct, onClick }: StatCardProps) {
+  const tok = ACCENT_TOKENS[accent];
   return (
     <div
-      className={`bg-white rounded-2xl border border-slate-200 p-5 transition-colors ${onClick ? 'cursor-pointer hover:border-blue-300 hover:bg-blue-50/30' : ''}`}
+      className={`bg-white rounded-2xl border ${tok.border} ring-1 ${tok.border.split(' ')[1]} p-4 transition-colors ${onClick ? 'cursor-pointer hover:bg-slate-50/40' : ''}`}
       onClick={onClick}
       onMouseDown={onClick ? (e) => { if (e.button === 1) { e.preventDefault(); onClick(e); } } : undefined}
     >
-      <p className="text-xs font-medium text-slate-400 uppercase tracking-widest">{label}</p>
-      <p className={`text-3xl font-bold mt-1 ${color ?? 'text-slate-800'}`}>{typeof value === 'number' ? fmt(value) : value}</p>
-      {sub && <p className="text-xs text-slate-400 mt-1">{sub}</p>}
+      <div className="flex items-center gap-3">
+        {donutPct != null ? (
+          <MiniDonut pct={donutPct} color={tok.iconStroke} />
+        ) : icon ? (
+          <div className={`w-10 h-10 rounded-lg ${tok.iconBg} flex items-center justify-center shrink-0`}>
+            <StatIcon kind={icon} color={tok.iconStroke} />
+          </div>
+        ) : null}
+        <div className="min-w-0 flex-1">
+          <p className="text-[11px] font-medium text-slate-500 truncate">{label}</p>
+          <p className={`text-2xl font-bold mt-0.5 ${tok.valueText}`}>{typeof value === 'number' ? fmt(value) : value}</p>
+          {sub && <p className="text-[10px] text-slate-400 mt-0.5">{sub}</p>}
+        </div>
+      </div>
     </div>
   );
 }
 
 // ── Section wrapper ────────────────────────────────────────────────────────
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
     <div className="bg-white rounded-2xl border border-slate-200 p-5">
-      <h3 className="text-sm font-semibold text-slate-700 mb-4">{title}</h3>
+      <div className="mb-4">
+        <h3 className="text-sm font-semibold text-slate-700">{title}</h3>
+        {subtitle && <p className="text-[11px] text-slate-400 mt-0.5">{subtitle}</p>}
+      </div>
       {children}
     </div>
   );
@@ -158,10 +259,10 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: { value: number; name?: string; color?: string; fill?: string }[]; label?: string }) {
   if (!active || !payload?.length) return null;
   return (
-    <div className="bg-white border border-slate-200 rounded-xl shadow-lg px-3 py-2 text-xs">
+    <div className="bg-white border border-slate-200 rounded-xl shadow-lg px-3 py-2 text-xs backdrop-blur-sm">
       {label && <p className="font-medium text-slate-600 mb-1">{label}</p>}
       {payload.map((p, i) => (
-        <p key={i} style={{ color: p.color ?? p.fill ?? '#3b82f6' }}>{p.name ? `${p.name}: ` : ''}{fmt(p.value)}</p>
+        <p key={i} style={{ color: p.color ?? p.fill ?? '#22d3ee' }}>{p.name ? `${p.name}: ` : ''}{fmt(p.value)}</p>
       ))}
     </div>
   );
@@ -328,6 +429,9 @@ export default function DashboardPage() {
       if (val === 'true' && key === 'alert_worthy') title = 'Alert-worthy Conversations';
       else if (val === 'true' && key === 'analyzed') title = 'Analyzed Conversations';
       else if (val === 'false' && key === 'analyzed') title = 'Unanalyzed Conversations';
+      else if (val === 'true' && key === 'asana_ticketed') title = 'Escalations';
+      else if (val === 'open' && key === 'asana_status')   title = 'Open Escalations';
+      else if (val === 'closed' && key === 'asana_status') title = 'Resolved Escalations';
       else title = `${label}: ${val}`;
     }
 
@@ -593,80 +697,240 @@ export default function DashboardPage() {
 
       {!loading && !error && data && (
         <>
-          {/* Stat cards */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Stat cards — Asana escalation metrics */}
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
             <StatCard
-              label="Total Conversations"
-              value={data.overview.total}
-              onClick={(e) => navToConversations({}, e)}
+              label="Total Escalations"
+              value={data.escalationStats.totalEscalations}
+              accent="cyan"
+              icon="doc"
+              onClick={(e) => navToConversations({ asana_ticketed: 'true' }, e)}
             />
             <StatCard
-              label="Analyzed"
-              value={data.overview.analyzed}
-              sub={`${data.overview.analyzedPct}% of total`}
-              color="text-blue-600"
-              onClick={(e) => navToConversations({ analyzed: 'true' }, e)}
+              label="Resolved"
+              value={data.escalationStats.resolved}
+              accent="teal"
+              icon="check"
+              onClick={(e) => navToConversations({ asana_status: 'closed' }, e)}
             />
             <StatCard
-              label="Unanalyzed"
-              value={data.overview.unanalyzed}
-              color="text-amber-500"
-              onClick={(e) => navToConversations({ analyzed: 'false' }, e)}
+              label="Pending Action <24h"
+              value={data.escalationStats.pendingUnder24h}
+              accent="amber"
+              icon="clock"
+              onClick={(e) => navToConversations({ asana_status: 'open' }, e)}
             />
             <StatCard
-              label="Alert-worthy"
-              value={data.overview.alertWorthy}
-              sub="Needs immediate action"
-              color="text-red-500"
-              onClick={(e) => navToConversations({ alert_worthy: 'true' }, e)}
+              label="Pending Action >24h"
+              value={data.escalationStats.pendingOver24h}
+              accent="rose"
+              icon="alarm"
+              onClick={(e) => navToConversations({ asana_status: 'open' }, e)}
+            />
+            <StatCard
+              label="Closure Rate"
+              value={`${data.escalationStats.closureRate}%`}
+              accent="violet"
+              donutPct={data.escalationStats.closureRate}
+              onClick={(e) => navToConversations({ asana_ticketed: 'true' }, e)}
             />
           </div>
 
-          {/* Row 1: Time series + Resolution */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {/* Row: Top 5 Issues + Top 5 Issue Spikes ──────────────────────── */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Top 5 Issues — uses topItems sliced to 5; respects global filters
+                so "today" by default and shifts when the user changes the date. */}
+            <Section title="Top 5 Issues" subtitle="Re-ordered by count">
+              {data.topItems.length === 0 ? (
+                <Empty message="No analyzed data yet" />
+              ) : (
+                <ResponsiveContainer width="100%" height={Math.max(220, Math.min(5, data.topItems.length) * 40)}>
+                  <BarChart
+                    data={data.topItems.slice(0, 5)}
+                    layout="vertical"
+                    margin={{ top: 0, right: 48, left: 8, bottom: 0 }}
+                    style={{ cursor: 'pointer' }}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    onClick={(d: any, e: any) => { if (d?.activeLabel) navToConversations({ issue_item: d.activeLabel }, e); }}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    onMouseDown={(d: any, e: any) => { if (e?.button === 1 && d?.activeLabel) { e.preventDefault?.(); navToConversations({ issue_item: d.activeLabel }, e); } }}
+                  >
+                    <defs>
+                      <linearGradient id="top5Bar" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%"   stopColor="#22d3ee" />
+                        <stop offset="100%" stopColor="#60a5fa" />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                    <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                    <YAxis type="category" dataKey="label" width={140} tick={{ fontSize: 11, fill: '#475569' }} />
+                    <Tooltip content={<ChartTooltip />} />
+                    <Bar dataKey="count" fill="url(#top5Bar)" radius={[0, 4, 4, 0]} name="Conversations" label={{ position: 'right', fill: '#94a3b8', fontSize: 11 }} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </Section>
 
-            {/* Conversations over time — spans 2 cols */}
-            <div className="lg:col-span-2">
-              <Section title="Conversations Over Time">
-                {data.conversationsByDate.length === 0 ? (
-                  <Empty message="No date data available" />
-                ) : (
-                  <ResponsiveContainer width="100%" height={220}>
-                    <LineChart
-                      data={data.conversationsByDate}
-                      margin={{ top: 4, right: 8, left: -20, bottom: 40 }}
-                      style={{ cursor: 'pointer' }}
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      onClick={(d: any, e: any) => { if (d?.activeLabel) navToConversations({ dateFrom: d.activeLabel, dateTo: d.activeLabel }, e); }}
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      onMouseDown={(d: any, e: any) => { if (e?.button === 1 && d?.activeLabel) { e.preventDefault?.(); navToConversations({ dateFrom: d.activeLabel, dateTo: d.activeLabel }, e); } }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                      <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} interval={0} angle={-45} textAnchor="end" />
-                      <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                      <Tooltip content={<ChartTooltip />} />
-                      <Line
+            {/* Top 5 Issue Spikes — fixed last-2-completed-days comparison.
+                Per spec: never affected by global filters. */}
+            <Section title="Top 5 Issue Spikes - Today vs. Yesterday Comparison">
+              {data.issueSpikes.length === 0 ? (
+                <Empty message="Not enough data for the last 2 completed days" />
+              ) : (
+                <ResponsiveContainer width="100%" height={240}>
+                  <BarChart data={data.issueSpikes} margin={{ top: 8, right: 16, left: -10, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="issue" tick={{ fontSize: 10, fill: '#94a3b8' }} interval={0} />
+                    <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} />
+                    <Tooltip content={<ChartTooltip />} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar dataKey="today"     name="Today"     fill="#06b6d4" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="yesterday" name="Yesterday" fill="#67e8f9" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </Section>
+          </div>
+
+          {/* Row: Dissatisfaction Trend + Weekly Issue Heat Map ─────────── */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {/* Dissatisfaction Trend — top 3 issues over last 30 days, dissatisfied
+                conversations only. */}
+            <Section title="Dissatisfaction Trend">
+              {data.dissatisfactionTrend.issues.length === 0 ? (
+                <Empty message="No dissatisfaction data in the last 30 days" />
+              ) : (
+                <ResponsiveContainer width="100%" height={240}>
+                  <AreaChart data={data.dissatisfactionTrend.data} margin={{ top: 8, right: 16, left: -10, bottom: 0 }}>
+                    <defs>
+                      {data.dissatisfactionTrend.issues.map((issue, i) => {
+                        const c = COLORS[i % COLORS.length];
+                        return (
+                          <linearGradient key={issue} id={`trendGrad-${i}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%"   stopColor={c} stopOpacity={0.45} />
+                            <stop offset="100%" stopColor={c} stopOpacity={0} />
+                          </linearGradient>
+                        );
+                      })}
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 9, fill: '#94a3b8' }} interval={0} angle={-45} textAnchor="end" height={50} />
+                    <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} />
+                    <Tooltip content={<ChartTooltip />} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
+                    {data.dissatisfactionTrend.issues.map((issue, i) => (
+                      <Area
+                        key={issue}
                         type="monotone"
-                        dataKey="count"
-                        stroke="#3b82f6"
+                        dataKey={issue}
+                        stroke={COLORS[i % COLORS.length]}
                         strokeWidth={2}
-                        dot={false}
-                        name="Conversations"
-                        activeDot={{ r: 6, cursor: 'pointer' }}
+                        fill={`url(#trendGrad-${i})`}
+                        name={issue}
                       />
-                    </LineChart>
-                  </ResponsiveContainer>
-                )}
-              </Section>
-            </div>
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              )}
+            </Section>
 
-            {/* Resolution status donut */}
+            {/* Weekly Issue Heat Map — last 7 days, top 5 issues × day-of-week.
+                Per spec: today on far right, dynamically shifts each new day. */}
+            <Section title="Weekly Issue Heat Map">
+              {data.weeklyIssueHeatmap.issues.length === 0 ? (
+                <Empty message="No issue data in the last 7 days" />
+              ) : (
+                <IssueHeatmap
+                  rows={data.weeklyIssueHeatmap.issues.map((r) => ({ key: r.issue, label: r.issue }))}
+                  cols={data.weeklyIssueHeatmap.days.map((d) => ({ key: d.date, label: d.label }))}
+                  getValue={(rowKey, colKey) => {
+                    const row = data.weeklyIssueHeatmap.issues.find((x) => x.issue === rowKey);
+                    if (!row) return 0;
+                    const colIdx = data.weeklyIssueHeatmap.days.findIndex((d) => d.date === colKey);
+                    return colIdx >= 0 ? row.counts[colIdx] : 0;
+                  }}
+                  palette="cyan"
+                  cellHeight="32px"
+                  rowLabelWidth="160px"
+                  onCellClick={(rowKey, colKey, _v, e) => navToConversations({ issue_item: rowKey, dateFrom: colKey, dateTo: colKey }, e)}
+                />
+              )}
+            </Section>
+          </div>
+
+          {/* Daily & Hourly Issue Heat Map — full width ─────────────────── */}
+          <Section title="Daily & Hourly Issue Heat Map">
+            {data.dailyHourlyIssueHeatmap.dates.length === 0 ? (
+              <Empty message="No data available" />
+            ) : (
+              <IssueHeatmap
+                rows={data.dailyHourlyIssueHeatmap.dates.map((d) => {
+                  const dt = new Date(d + 'T00:00:00Z');
+                  const label = `${String(dt.getUTCDate()).padStart(2, '0')}-${dt.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })}`;
+                  return { key: d, label };
+                })}
+                cols={Array.from({ length: 24 }, (_, h) => ({
+                  key: String(h),
+                  label: String(h).padStart(2, '0'),
+                }))}
+                getValue={(rowKey, colKey) => {
+                  const cell = data.dailyHourlyIssueHeatmap.cells.find((c) => c.date === rowKey && c.hour === parseInt(colKey, 10));
+                  return cell?.count ?? 0;
+                }}
+                showCounts
+                palette="magenta"
+                cellHeight="22px"
+                rowLabelWidth="80px"
+              />
+            )}
+          </Section>
+
+          {/* Row: Conversations Over Time + Resolution Status ────────────── */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            <Section title="Conversations Over Time">
+              {data.conversationsByDate.length === 0 ? (
+                <Empty message="No date data available" />
+              ) : (
+                <ResponsiveContainer width="100%" height={240}>
+                  <LineChart
+                    data={data.conversationsByDate}
+                    margin={{ top: 4, right: 8, left: -20, bottom: 40 }}
+                    style={{ cursor: 'pointer' }}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    onClick={(d: any, e: any) => { if (d?.activeLabel) navToConversations({ dateFrom: d.activeLabel, dateTo: d.activeLabel }, e); }}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    onMouseDown={(d: any, e: any) => { if (e?.button === 1 && d?.activeLabel) { e.preventDefault?.(); navToConversations({ dateFrom: d.activeLabel, dateTo: d.activeLabel }, e); } }}
+                  >
+                    <defs>
+                      <linearGradient id="convoLine" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%"   stopColor="#22d3ee" />
+                        <stop offset="100%" stopColor="#f472b6" />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} interval={0} angle={-45} textAnchor="end" />
+                    <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                    <Tooltip content={<ChartTooltip />} />
+                    <Line
+                      type="monotone"
+                      dataKey="count"
+                      stroke="url(#convoLine)"
+                      strokeWidth={3}
+                      dot={false}
+                      name="Conversations"
+                      activeDot={{ r: 6, cursor: 'pointer', fill: '#22d3ee' }}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              )}
+            </Section>
+
             <Section title="Resolution Status">
               {data.resolutionBreakdown.length === 0 ? (
                 <Empty message="No analyzed data yet" />
               ) : (
                 <>
-                  <ResponsiveContainer width="100%" height={160}>
+                  <ResponsiveContainer width="100%" height={180}>
                     <PieChart style={{ cursor: 'pointer' }}>
                       <Pie
                         data={data.resolutionBreakdown}
@@ -674,8 +938,8 @@ export default function DashboardPage() {
                         nameKey="label"
                         cx="50%"
                         cy="50%"
-                        innerRadius={45}
-                        outerRadius={70}
+                        innerRadius={50}
+                        outerRadius={80}
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         onClick={(d: any, _i: number, e: any) => { if (d?.label) navToConversations({ resolution_status: d.label }, e); }}
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -709,98 +973,61 @@ export default function DashboardPage() {
             </Section>
           </div>
 
-          {/* Row 2: Top categories + Severity */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-
-            {/* Top issue categories — spans 2 cols */}
-            <div className="lg:col-span-2">
-              <Section title="Top Issue Categories">
-                {data.topCategories.length === 0 ? (
-                  <Empty message="No analyzed data yet" />
-                ) : (
-                  <ResponsiveContainer width="100%" height={Math.max(220, data.topCategories.length * 36)}>
-                    <BarChart
-                      data={data.topCategories}
-                      layout="vertical"
-                      margin={{ top: 0, right: 16, left: 8, bottom: 0 }}
-                      style={{ cursor: 'pointer' }}
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      onClick={(data: any, e: any) => { if (data?.activeLabel) navToConversations({ issue_category: data.activeLabel }, e); }}
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      onMouseDown={(data: any, e: any) => { if (e?.button === 1 && data?.activeLabel) { e.preventDefault?.(); navToConversations({ issue_category: data.activeLabel }, e); } }}
+          {/* Dissatisfaction Severity — full width ───────────────────────── */}
+          <Section title="Dissatisfaction Severity">
+            {data.severityBreakdown.length === 0 ? (
+              <Empty message="No analyzed data yet" />
+            ) : (
+              <>
+                <ResponsiveContainer width="100%" height={220}>
+                  <BarChart
+                    data={data.severityBreakdown}
+                    margin={{ top: 4, right: 8, left: -20, bottom: 0 }}
+                    style={{ cursor: 'pointer' }}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    onClick={(data: any, e: any) => { if (data?.activeLabel) navToConversations({ dissatisfaction_severity: data.activeLabel }, e); }}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    onMouseDown={(data: any, e: any) => { if (e?.button === 1 && data?.activeLabel) { e.preventDefault?.(); navToConversations({ dissatisfaction_severity: data.activeLabel }, e); } }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
+                    <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                    <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                    <Tooltip content={<ChartTooltip />} />
+                    <Bar
+                      dataKey="count"
+                      radius={[4, 4, 0, 0]}
+                      name="Count"
                     >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
-                      <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                      <YAxis type="category" dataKey="label" width={180} tick={{ fontSize: 11, fill: '#475569' }} />
-                      <Tooltip content={<ChartTooltip />} />
-                      <Bar
-                        dataKey="count"
-                        fill="#3b82f6"
-                        radius={[0, 4, 4, 0]}
-                        name="Conversations"
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
-                )}
-              </Section>
-            </div>
-
-            {/* Dissatisfaction severity */}
-            <Section title="Dissatisfaction Severity">
-              {data.severityBreakdown.length === 0 ? (
-                <Empty message="No analyzed data yet" />
-              ) : (
-                <>
-                  <ResponsiveContainer width="100%" height={160}>
-                    <BarChart
-                      data={data.severityBreakdown}
-                      margin={{ top: 4, right: 8, left: -20, bottom: 0 }}
-                      style={{ cursor: 'pointer' }}
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      onClick={(data: any, e: any) => { if (data?.activeLabel) navToConversations({ dissatisfaction_severity: data.activeLabel }, e); }}
-                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                      onMouseDown={(data: any, e: any) => { if (e?.button === 1 && data?.activeLabel) { e.preventDefault?.(); navToConversations({ dissatisfaction_severity: data.activeLabel }, e); } }}
+                      {data.severityBreakdown.map((entry, i) => (
+                        <Cell key={i} fill={SEVERITY_COLORS[entry.label] ?? COLORS[i % COLORS.length]} />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+                <div className="flex flex-wrap gap-x-6 gap-y-1.5 mt-2">
+                  {data.severityBreakdown.map((s, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center justify-between text-xs cursor-pointer hover:bg-slate-50 rounded px-1 -mx-1 transition-colors min-w-[140px]"
+                      onClick={(e) => navToConversations({ dissatisfaction_severity: s.label }, e)}
+                      onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); navToConversations({ dissatisfaction_severity: s.label }, e); } }}
                     >
-                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                      <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                      <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                      <Tooltip content={<ChartTooltip />} />
-                      <Bar
-                        dataKey="count"
-                        radius={[4, 4, 0, 0]}
-                        name="Count"
-                      >
-                        {data.severityBreakdown.map((entry, i) => (
-                          <Cell key={i} fill={SEVERITY_COLORS[entry.label] ?? COLORS[i % COLORS.length]} />
-                        ))}
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                  <div className="space-y-1.5 mt-2">
-                    {data.severityBreakdown.map((s, i) => (
-                      <div
-                        key={i}
-                        className="flex items-center justify-between text-xs cursor-pointer hover:bg-slate-50 rounded px-1 -mx-1 transition-colors"
-                        onClick={(e) => navToConversations({ dissatisfaction_severity: s.label }, e)}
-                        onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); navToConversations({ dissatisfaction_severity: s.label }, e); } }}
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <div className="w-2.5 h-2.5 rounded-full" style={{ background: SEVERITY_COLORS[s.label] ?? COLORS[i % COLORS.length] }} />
-                          <span className="text-slate-600">{s.label}</span>
-                        </div>
-                        <span className="font-semibold text-slate-700">{fmt(s.count)}</span>
+                      <div className="flex items-center gap-1.5">
+                        <div className="w-2.5 h-2.5 rounded-full" style={{ background: SEVERITY_COLORS[s.label] ?? COLORS[i % COLORS.length] }} />
+                        <span className="text-slate-600">{s.label}</span>
                       </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </Section>
-          </div>
+                      <span className="font-semibold text-slate-700 ml-3">{fmt(s.count)}</span>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </Section>
 
-          {/* Row 3: Language + Top items */}
+          {/* Lower section — existing analytics, reordered per spec.
+              Order: Language, Brand, Agent (3-col row), then Category Breakdown
+              (full), then Issues Breakdown (full, last). */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-
-            {/* Language distribution */}
             <Section title="Language Distribution">
               {data.languageBreakdown.length === 0 ? (
                 <Empty message="No analyzed data yet" />
@@ -833,53 +1060,11 @@ export default function DashboardPage() {
               )}
             </Section>
 
-            {/* Top issue items — spans 2 cols */}
-            <div className="lg:col-span-2">
-              <Section title="Top Issue Items">
-                {data.topItems.length === 0 ? (
-                  <Empty message="No analyzed data yet" />
-                ) : (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-slate-100">
-                          <th className="text-left py-2 pr-4 text-xs font-semibold text-slate-400 uppercase tracking-wide">Issue</th>
-                          <th className="text-left py-2 pr-4 text-xs font-semibold text-slate-400 uppercase tracking-wide">Category</th>
-                          <th className="text-right py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Count</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-slate-50">
-                        {data.topItems.map((item, i) => (
-                          <tr
-                            key={i}
-                            className="hover:bg-slate-50 transition-colors cursor-pointer"
-                            onClick={(e) => navToConversations({ issue_item: item.label }, e)}
-                            onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); navToConversations({ issue_item: item.label }, e); } }}
-                          >
-                            <td className="py-2.5 pr-4 text-slate-700 text-xs">{item.label}</td>
-                            <td className="py-2.5 pr-4 text-slate-400 text-xs">{item.category}</td>
-                            <td className="py-2.5 text-right">
-                              <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">{fmt(item.count)}</span>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </Section>
-            </div>
-          </div>
-
-          {/* Row 4: Brand + Agent breakdown tables */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-
-            {/* Brand breakdown */}
             <Section title="Brand Breakdown">
               {data.brandBreakdown.length === 0 ? (
                 <Empty message="No brand data available" />
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-2 max-h-[300px] overflow-y-auto">
                   {data.brandBreakdown.map((b, i) => {
                     const pct = data.overview.analyzed > 0 ? Math.round((b.count / data.overview.analyzed) * 100) : 0;
                     return (
@@ -903,12 +1088,11 @@ export default function DashboardPage() {
               )}
             </Section>
 
-            {/* Agent breakdown */}
             <Section title="Agent Breakdown">
               {data.agentBreakdown.length === 0 ? (
                 <Empty message="No agent data available" />
               ) : (
-                <div className="overflow-auto max-h-[520px]">
+                <div className="overflow-auto max-h-[300px]">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-white">
                       <tr className="border-b border-slate-100">
@@ -936,6 +1120,74 @@ export default function DashboardPage() {
               )}
             </Section>
           </div>
+
+          {/* Category Breakdown — renamed from "Top Issue Categories";
+              now shows all categories (no top-10 cap per spec). */}
+          <Section title="Category Breakdown">
+            {data.topCategories.length === 0 ? (
+              <Empty message="No analyzed data yet" />
+            ) : (
+              <ResponsiveContainer width="100%" height={Math.max(220, data.topCategories.length * 36)}>
+                <BarChart
+                  data={data.topCategories}
+                  layout="vertical"
+                  margin={{ top: 0, right: 32, left: 8, bottom: 0 }}
+                  style={{ cursor: 'pointer' }}
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  onClick={(d: any, e: any) => { if (d?.activeLabel) navToConversations({ issue_category: d.activeLabel }, e); }}
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  onMouseDown={(d: any, e: any) => { if (e?.button === 1 && d?.activeLabel) { e.preventDefault?.(); navToConversations({ issue_category: d.activeLabel }, e); } }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
+                  <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
+                  <YAxis type="category" dataKey="label" width={220} tick={{ fontSize: 11, fill: '#475569' }} />
+                  <Tooltip content={<ChartTooltip />} />
+                  <Bar
+                    dataKey="count"
+                    fill="#3b82f6"
+                    radius={[0, 4, 4, 0]}
+                    name="Conversations"
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </Section>
+
+          {/* Issues Breakdown — renamed from "Top Issue Items"; full list,
+              positioned last per spec since it's the longest. */}
+          <Section title="Issues Breakdown">
+            {data.topItems.length === 0 ? (
+              <Empty message="No analyzed data yet" />
+            ) : (
+              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-white">
+                    <tr className="border-b border-slate-100">
+                      <th className="text-left py-2 pr-4 text-xs font-semibold text-slate-400 uppercase tracking-wide">Issue</th>
+                      <th className="text-left py-2 pr-4 text-xs font-semibold text-slate-400 uppercase tracking-wide">Category</th>
+                      <th className="text-right py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Count</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-50">
+                    {data.topItems.map((item, i) => (
+                      <tr
+                        key={i}
+                        className="hover:bg-slate-50 transition-colors cursor-pointer"
+                        onClick={(e) => navToConversations({ issue_item: item.label }, e)}
+                        onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); navToConversations({ issue_item: item.label }, e); } }}
+                      >
+                        <td className="py-2.5 pr-4 text-slate-700 text-xs">{item.label}</td>
+                        <td className="py-2.5 pr-4 text-slate-400 text-xs">{item.category}</td>
+                        <td className="py-2.5 text-right">
+                          <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">{fmt(item.count)}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Section>
         </>
       )}
 
