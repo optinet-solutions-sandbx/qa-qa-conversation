@@ -4,6 +4,11 @@ import type { AnalysisResult } from '@/lib/types';
 
 interface Props {
   result: AnalysisResult;
+  // ISO timestamp from our DB (intercom_created_at). When provided, it overrides
+  // the AI's `conversation_date` field — the model never sees the real date in
+  // its prompt, so any value it emits there is fabricated from transcript
+  // content or training data and shouldn't be trusted as factual metadata.
+  conversationDate?: string | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -146,7 +151,7 @@ function JsonTable({ data }: { data: Record<string, unknown> }) {
 
 // ── Root component ────────────────────────────────────────────────────────────
 
-export default function AnalysisResultView({ result }: Props) {
+export default function AnalysisResultView({ result, conversationDate }: Props) {
   const cleaned = stripCodeFences(result.analysisText.trim());
 
   let parsed: Record<string, unknown> | null = null;
@@ -160,6 +165,19 @@ export default function AnalysisResultView({ result }: Props) {
   }
 
   if (parsed) {
+    // The AI fabricates a conversation date because it isn't given the real
+    // one in its prompt. Strip every variant it might emit (snake_case,
+    // camelCase, "Conversation Date" with a space, "date", "chat date"…)
+    // and substitute the real intercom_created_at from our DB when we have it.
+    const norm = (k: string) => k.toLowerCase().replace(/[\s_-]/g, '');
+    const next: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      const n = norm(k);
+      if (n === 'conversationdate' || n === 'chatdate' || n === 'date') continue;
+      next[k] = v;
+    }
+    if (conversationDate) next.conversation_date = conversationDate;
+    parsed = next;
     return (
       <div className="bg-white rounded-xl border border-slate-200 px-4 py-1 overflow-hidden min-w-0">
         <JsonTable data={parsed} />

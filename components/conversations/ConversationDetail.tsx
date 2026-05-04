@@ -817,7 +817,7 @@ export default function ConversationDetail({ conversation, analysisRun, readOnly
   const analysisContent = (
     <div>
       {analysisResult ? (
-        <AnalysisResultView result={analysisResult} />
+        <AnalysisResultView result={analysisResult} conversationDate={conv.intercom_created_at} />
       ) : isAnalyzing ? (
         <div className="flex flex-col items-center justify-center py-10 gap-3">
           <div className="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin" />
