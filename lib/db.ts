@@ -943,6 +943,50 @@ export async function dbCountConversationsByIssueBeforeCutoff(
   return count ?? 0;
 }
 
+// Loads up to `limit` conversations whose intercom_created_at falls in
+// [fromDateISO, toDateISO] AND whose analyzed_at is before cutoffISO AND
+// which already have a summary (i.e. were analyzed under the previous
+// prompt). Used to re-run a window of recent conversations after the
+// active prompt is updated. Ordering by analyzed_at ascending pairs with
+// the cutoff so already-reprocessed rows drop out of subsequent pages.
+export async function dbGetAnalyzedConversationsInDateRangeBeforeCutoff(
+  fromDateISO: string,
+  toDateISO: string,
+  cutoffISO: string,
+  limit: number,
+): Promise<MinimalConversation[]> {
+  const { data, error } = await supabase
+    .from('conversations')
+    .select('id, intercom_id, player_name, player_email, agent_name, brand, original_text')
+    .not('summary', 'is', null)
+    .not('original_text', 'is', null)
+    .gte('intercom_created_at', fromDateISO)
+    .lte('intercom_created_at', toDateISO)
+    .lt('analyzed_at', cutoffISO)
+    .order('analyzed_at', { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(`[db] get conversations by date range: ${error.message}`);
+  return (data ?? []) as MinimalConversation[];
+}
+
+// Companion count for the loop's `remaining` value.
+export async function dbCountAnalyzedConversationsInDateRangeBeforeCutoff(
+  fromDateISO: string,
+  toDateISO: string,
+  cutoffISO: string,
+): Promise<number> {
+  const { count, error } = await supabase
+    .from('conversations')
+    .select('id', { count: 'exact', head: true })
+    .not('summary', 'is', null)
+    .not('original_text', 'is', null)
+    .gte('intercom_created_at', fromDateISO)
+    .lte('intercom_created_at', toDateISO)
+    .lt('analyzed_at', cutoffISO);
+  if (error) throw new Error(`[db] count conversations by date range: ${error.message}`);
+  return count ?? 0;
+}
+
 // Builds a Postgres POSIX regex pattern that matches the issue label as the
 // value of a JSON `item` key, with optional whitespace around the colon and
 // an optional `<n>. ` numeric prefix on the value (e.g. matches both
