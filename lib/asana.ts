@@ -1,7 +1,8 @@
 // Asana integration — pushes a ticket into the configured Asana project when
-// the AI flags a conversation with dissatisfaction severity Level 3. Called
-// from lib/analyze-sync.ts after a successful analysis. Failures are logged
-// and swallowed so a flaky Asana API never breaks the analysis pipeline.
+// an analysed conversation matches the escalation rule table in
+// lib/escalationRules.ts (segment + severity + category). Called from
+// lib/analyze-sync.ts after a successful analysis. Failures are logged and
+// swallowed so a flaky Asana API never breaks the analysis pipeline.
 //
 // Routing: each ticket lands in the project section (board column) whose name
 // matches the conversation's account_manager. Matching is case-insensitive
@@ -74,7 +75,8 @@
 // re-analysis of that conversation will NOT silently re-create the ticket
 // the user deleted on purpose.
 
-import { cleanPlayerName, getVipLevel, getBacklinkFull, parseSummaryForTable } from '@/lib/utils';
+import { cleanPlayerName, getVipLevel, getBacklinkFull, parseSummaryForTable, getSegment } from '@/lib/utils';
+import { evaluateEscalation, severityToNumber, extractCategoryNumbers } from '@/lib/escalationRules';
 
 const ASANA_API = 'https://app.asana.com/api/1.0';
 
@@ -831,7 +833,8 @@ export async function maybeCreateAsanaTicketForConversation(
       ]);
 
     const parsed = parseAnalysisSummary(summaryText);
-    if (normalizeSeverity(parsed.dissatisfaction_severity) !== 'Level 3') return null;
+    const normalizedSev = normalizeSeverity(parsed.dissatisfaction_severity);
+    const severityNum = severityToNumber(parsed.dissatisfaction_severity);
 
     const ctx = await dbGetAsanaConversationContext(conversationId);
     if (!ctx || ctx.asana_task_gid) return null;
@@ -847,6 +850,21 @@ export async function maybeCreateAsanaTicketForConversation(
       if (it && !seenItem.has(it)) { seenItem.add(it); issueItems.push(it); }
     }
 
+    // Gate against the (segment, severity, category) escalation matrix —
+    // SoftSwiss never escalates, VIP always does, NON-VIP only escalates
+    // sev-1/2 for categories 1-5 (sev-3 always escalates). See
+    // lib/escalationRules.ts for the full table.
+    const segment = getSegment(ctx);
+    const categoryNumbers = extractCategoryNumbers(issueCategories);
+    const decision = evaluateEscalation(segment, severityNum, categoryNumbers);
+    if (!decision.escalate) {
+      console.log(
+        `[asana] skip escalation for ${conversationId}: ${decision.reason} ` +
+        `(segment=${segment ?? 'null'}, severity=${normalizedSev ?? 'null'}, categories=[${categoryNumbers.join(',')}])`,
+      );
+      return null;
+    }
+
     const gid = await createAsanaTaskForConversation({
       conversationId,
       intercomId: ctx.intercom_id,
@@ -860,7 +878,7 @@ export async function maybeCreateAsanaTicketForConversation(
       language: ctx.language,
       country: ctx.player_country,
       backlinkFull: getBacklinkFull(ctx),
-      severity: 'Level 3',
+      severity: normalizedSev ?? `Level ${severityNum}`,
       resolutionStatus: parsed.resolution_status,
       issueCategories,
       issueItems,
