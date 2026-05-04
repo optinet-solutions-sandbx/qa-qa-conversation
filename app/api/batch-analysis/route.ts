@@ -22,21 +22,13 @@ export const maxDuration = 300;
 
 // ── Rate-limit / size guards ───────────────────────────────────────────────
 // OpenAI Batch API limits: 50k requests per file, 100 MB per file.
-// Chunk size dropped from 500 → 200 → 150 on 2026-04-29 (must stay in sync
-// with the analyze-daily cron). 500 busted gpt-5-mini's 5M enqueued-token
-// org cap; 200 fit but produced 31/200 individual failures from reasoning-
-// budget exhaustion at max_completion_tokens=2048; 150 paired with
-// max_completion_tokens=4096 gives headroom on both: 150 × (12k input +
-// 4k output) ≈ 2.4M enqueued, well under the 5M cap.
+// 150 × ~12k input tokens ≈ 1.8M enqueued — comfortably inside any per-org
+// Batch quota and identical to the cap that was previously tuned for
+// gpt-5-mini, so we leave it conservative after the 2026-05-04 model swap to
+// gpt-4o. Re-call POST after each batch — the endpoint re-queries
+// WHERE summary IS NULL, so it picks up where it left off without re-runs.
 const MAX_REQUESTS_PER_CHUNK = 150;
 const MAX_FILE_BYTES = 90 * 1024 * 1024; // 90 MB hard cap
-// Held at 1 to stay under gpt-5-mini's 5M enqueued-token org cap (confirmed
-// by an "Enqueued token limit reached" failure on 2026-04-29 when this was 3).
-// A 500-chat batch is ~2.5–3.5M tokens, so 1 leaves headroom for any other
-// in-flight batch from the analyze-daily cron. Re-call POST after the current
-// batch completes — the endpoint re-queries WHERE summary IS NULL, so it
-// naturally picks up where it left off with no risk of re-processing.
-// Matches MAX_CHUNKS_PER_RUN in the analyze-daily cron.
 const MAX_CHUNKS_PER_SUBMISSION = 1;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -74,19 +66,17 @@ function buildJsonlLine(conv: {
     method: 'POST',
     url: '/v1/chat/completions',
     body: {
-      model: 'gpt-5-mini',
+      // Mirror the sync path (lib/analyze-sync.ts) exactly so Batch and sync
+      // produce identical verdicts. gpt-5-mini was previously used here for
+      // cost, but it misclassified ~96% of "Slow Response Times" tags during
+      // the May-4 drain (573/597 corrected by gpt-4o), so the savings weren't
+      // real once you count the re-analysis cost.
+      model: 'gpt-4o',
       messages: [
         { role: 'system', content: promptContent },
         { role: 'user', content: buildUserMessage(conv) },
       ],
-      // gpt-5 family rejects 'max_tokens' (use 'max_completion_tokens') and
-      // most reasoning models only allow the default temperature, so we omit
-      // temperature rather than risk the whole batch failing on validation.
-      // Bumped 2048 → 4096 on 2026-04-29: at 2048 a 200-chat batch came back
-      // with 31/200 individual failures because gpt-5-mini's internal
-      // reasoning tokens were exhausting the budget before the JSON output
-      // was produced.
-      max_completion_tokens: 4096,
+      temperature: 0.3,
     },
   });
 }
