@@ -13,12 +13,16 @@ import { analyzeBatchSequential } from '@/lib/analyze-sync';
 // so they get re-evaluated by gpt-4o. Designed to be called in a loop until
 // `remaining` reaches 0.
 //
-// POST /api/admin/reanalyze-by-issue?issue=<label>&cutoff=<ISO>&fromDate=<ISO>&limit=<N>
+// POST /api/admin/reanalyze-by-issue?issue=<label>&cutoff=<ISO>&fromDate=<ISO>&limit=<N>&analyzedFrom=<ISO>
 //   - Authenticates with CRON_SECRET
 //   - Loads up to `limit` conversations whose AI-analysis JSON has the
 //     structured tag `"item":"<label>"`, whose analyzed_at is before <cutoff>,
 //     and whose intercom_created_at is on/after <fromDate> (defaults to the
 //     dashboard's April 27 floor — same scope the dashboard reports against).
+//   - Optional `analyzedFrom` ISO floor on `analyzed_at` lets a caller scope
+//     to "only rows analyzed in the last X" — used after a prompt edit to
+//     refresh just-today's verdicts without touching older correctly-tagged
+//     rows.
 //   - Runs them sequentially via analyzeBatchSequential (15s spacing,
 //     gpt-4o, 429 retry-with-backoff)
 //   - Returns analyzed/failed counts plus `remaining` so a calling script
@@ -60,6 +64,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'fromDate is not a valid ISO timestamp' }, { status: 400 });
   }
 
+  const analyzedFromRaw = req.nextUrl.searchParams.get('analyzedFrom')?.trim();
+  const analyzedFrom = analyzedFromRaw || undefined;
+  if (analyzedFrom && Number.isNaN(Date.parse(analyzedFrom))) {
+    return NextResponse.json({ error: 'analyzedFrom is not a valid ISO timestamp' }, { status: 400 });
+  }
+
   const limitParam = parseInt(req.nextUrl.searchParams.get('limit') ?? String(DEFAULT_LIMIT), 10);
   const limit = Math.min(Math.max(1, isNaN(limitParam) ? DEFAULT_LIMIT : limitParam), MAX_LIMIT);
 
@@ -70,7 +80,7 @@ export async function POST(req: NextRequest) {
 
   let conversations;
   try {
-    conversations = await dbGetConversationsByIssueBeforeCutoff(issue, cutoff, fromDate, limit);
+    conversations = await dbGetConversationsByIssueBeforeCutoff(issue, cutoff, fromDate, limit, analyzedFrom);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 400 });
   }
@@ -80,6 +90,7 @@ export async function POST(req: NextRequest) {
       issue,
       cutoff,
       fromDate,
+      analyzedFrom: analyzedFrom ?? null,
       remaining: 0,
       processed: 0,
       analyzed: 0,
@@ -99,12 +110,13 @@ export async function POST(req: NextRequest) {
   // tags the issue, OR if gpt-4o re-confirmed the same tag (because then
   // analyzed_at is now past the cutoff). Either way it won't be picked
   // again on the next iteration.
-  const remaining = await dbCountConversationsByIssueBeforeCutoff(issue, cutoff, fromDate);
+  const remaining = await dbCountConversationsByIssueBeforeCutoff(issue, cutoff, fromDate, analyzedFrom);
 
   return NextResponse.json({
     issue,
     cutoff,
     fromDate,
+    analyzedFrom: analyzedFrom ?? null,
     remaining,
     processed: conversations.length,
     analyzed,

@@ -7,12 +7,15 @@
 # Required env var:
 #   CRON_SECRET — production secret (Vercel → Settings → Environment Variables)
 # Optional env vars (with defaults):
-#   APP_URL  = https://ai-chat-qa-tool.vercel.app
-#   ISSUE    = "Slow response times"
-#   CUTOFF   = 2026-04-30T13:30:00Z   (gpt-4o switchover; conversations
-#                                       analyzed before this ran on gpt-5-mini)
-#   LIMIT    = 10                      (max 16; sized for the 300s timeout)
-#   PAUSE    = 3                       (seconds between iterations)
+#   APP_URL       = https://ai-chat-qa-tool.vercel.app
+#   ISSUE         = "Slow response times"
+#   CUTOFF        = 2026-04-30T13:30:00Z   (gpt-4o switchover; conversations
+#                                            analyzed before this ran on gpt-5-mini)
+#   ANALYZED_FROM = (unset)                (optional ISO floor on analyzed_at —
+#                                            use to scope to "rows analyzed since X",
+#                                            e.g. after a prompt edit today)
+#   LIMIT         = 10                     (max 16; sized for the 300s timeout)
+#   PAUSE         = 3                      (seconds between iterations)
 #
 # Usage:
 #   export CRON_SECRET=<paste from Vercel>
@@ -32,6 +35,7 @@ APP_URL="${APP_URL:-https://ai-chat-qa-tool.vercel.app}"
 ISSUE="${ISSUE:-Slow response times}"
 CUTOFF="${CUTOFF:-2026-04-30T13:30:00Z}"
 FROM_DATE="${FROM_DATE:-2026-04-27T00:00:00Z}"
+ANALYZED_FROM="${ANALYZED_FROM:-}"
 LIMIT="${LIMIT:-10}"
 PAUSE="${PAUSE:-3}"
 
@@ -39,12 +43,18 @@ PAUSE="${PAUSE:-3}"
 ISSUE_ENCODED="${ISSUE// /%20}"
 
 ENDPOINT="${APP_URL}/api/admin/reanalyze-by-issue?issue=${ISSUE_ENCODED}&cutoff=${CUTOFF}&fromDate=${FROM_DATE}&limit=${LIMIT}"
+if [ -n "$ANALYZED_FROM" ]; then
+  ENDPOINT="${ENDPOINT}&analyzedFrom=${ANALYZED_FROM}"
+fi
 
 echo "Reanalyzing conversations tagged: \"${ISSUE}\""
-echo "  fromDate: ${FROM_DATE}  (intercom_created_at floor)"
-echo "  cutoff:   ${CUTOFF}  (re-runs analyses before this)"
-echo "  limit:    ${LIMIT} per call"
-echo "  pause:    ${PAUSE}s between calls"
+echo "  fromDate:     ${FROM_DATE}  (intercom_created_at floor)"
+echo "  cutoff:       ${CUTOFF}  (re-runs analyses before this)"
+if [ -n "$ANALYZED_FROM" ]; then
+  echo "  analyzedFrom: ${ANALYZED_FROM}  (analyzed_at floor)"
+fi
+echo "  limit:        ${LIMIT} per call"
+echo "  pause:        ${PAUSE}s between calls"
 echo
 
 iteration=0

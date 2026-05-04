@@ -910,14 +910,17 @@ export async function dbGetConversationsByIssueBeforeCutoff(
   cutoffISO: string,
   fromDateISO: string,
   limit: number,
+  analyzedFromISO?: string,
 ): Promise<MinimalConversation[]> {
   const pattern = buildIssueTagPattern(issueLabel);
-  const { data, error } = await supabase
+  let query = supabase
     .from('conversations')
     .select('id, intercom_id, player_name, player_email, agent_name, brand, original_text')
     .filter('summary', 'imatch', pattern)
     .lt('analyzed_at', cutoffISO)
-    .gte('intercom_created_at', fromDateISO)
+    .gte('intercom_created_at', fromDateISO);
+  if (analyzedFromISO) query = query.gte('analyzed_at', analyzedFromISO);
+  const { data, error } = await query
     .order('analyzed_at', { ascending: true })
     .limit(limit);
   if (error) throw new Error(`[db] get conversations by issue: ${error.message}`);
@@ -931,14 +934,17 @@ export async function dbCountConversationsByIssueBeforeCutoff(
   issueLabel: string,
   cutoffISO: string,
   fromDateISO: string,
+  analyzedFromISO?: string,
 ): Promise<number> {
   const pattern = buildIssueTagPattern(issueLabel);
-  const { count, error } = await supabase
+  let query = supabase
     .from('conversations')
     .select('id', { count: 'exact', head: true })
     .filter('summary', 'imatch', pattern)
     .lt('analyzed_at', cutoffISO)
     .gte('intercom_created_at', fromDateISO);
+  if (analyzedFromISO) query = query.gte('analyzed_at', analyzedFromISO);
+  const { count, error } = await query;
   if (error) throw new Error(`[db] count conversations by issue: ${error.message}`);
   return count ?? 0;
 }
