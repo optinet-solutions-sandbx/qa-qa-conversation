@@ -263,27 +263,49 @@ function stripSummaryFences(text: string): string {
   return text.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '').trim();
 }
 
-export function parseSummaryForTable(raw: string | null): { category: string | null; issue: string | null; summary: string | null } {
+// Optional `prefer` lets callers (e.g. the dashboard drill-down overlay)
+// surface the result entry that matches the active issue/category filter
+// instead of always showing results[0]. Without this, a conversation whose
+// secondary issue matched the filter would render its primary issue label
+// in the table, leaving users staring at rows that look unrelated to the
+// filter they applied.
+export function parseSummaryForTable(
+  raw: string | null,
+  prefer?: { issue?: string | null; category?: string | null },
+): { category: string | null; issue: string | null; summary: string | null } {
   if (!raw) return { category: null, issue: null, summary: null };
   try {
     const json = JSON.parse(stripSummaryFences(raw));
     if (!json || typeof json !== 'object' || Array.isArray(json)) return { category: null, issue: null, summary: null };
 
-    // Category: prefer results[0].category, fall back to top-level keys
     const results: { category?: string; item?: string }[] = Array.isArray(json.results) ? json.results : [];
-    const first = results[0];
+
+    const norm = (s: string | null | undefined) =>
+      s == null ? '' : String(s).replace(/^\d+\.\s*/, '').trim().toLowerCase().replace(/s$/, '');
+    const normCat = (s: string | null | undefined) =>
+      s == null ? '' : String(s).replace(/^category\s+(\d+)[:\s]+/i, '$1. ').trim().toLowerCase();
+
+    const wantIssue = prefer?.issue ? norm(prefer.issue) : '';
+    const wantCat   = prefer?.category ? normCat(prefer.category) : '';
+    const matched = (wantIssue || wantCat)
+      ? results.find((r) =>
+          (!wantIssue || norm(r.item) === wantIssue) &&
+          (!wantCat   || normCat(r.category) === wantCat),
+        )
+      : undefined;
+    const picked = matched ?? results[0];
+
     const rawCat =
-      first?.category ??
+      picked?.category ??
       (typeof json.category === 'string' ? json.category : null) ??
       (typeof json.issue_category === 'string' ? json.issue_category : null) ??
       null;
     const category = rawCat ? rawCat.replace(/^category\s+(\d+)[:\s]+/i, '$1. ').trim() : null;
 
-    // Issue: prefer results[0].item, fall back to top-level issue keys.
     // Strip leading "N. " so variants like "1. Account Closure Requests"
     // and "Account Closure Requests" render identically in the UI.
     const rawIssue =
-      first?.item ??
+      picked?.item ??
       (typeof json.issue === 'string' ? json.issue : null) ??
       (typeof json.item === 'string' ? json.item : null) ??
       (typeof json.issue_item === 'string' ? json.issue_item : null) ??

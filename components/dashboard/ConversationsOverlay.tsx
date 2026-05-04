@@ -69,6 +69,13 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   }
 
+  // Multi-value filters arrive as string[] when several values are selected;
+  // use the first as the preferred display for the issue/category column.
+  function pickFirst(v: string | string[] | undefined): string | null {
+    if (!v) return null;
+    return Array.isArray(v) ? (v[0] ?? null) : v;
+  }
+
   return (
     <div
       ref={overlayRef}
@@ -134,7 +141,10 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                 {conversations.map((conv) => (
                   <tr key={conv.id} className="hover:bg-blue-50/40 transition-colors">
                     {(() => {
-                      const aiFields = parseSummaryForTable(conv.summary);
+                      const aiFields = parseSummaryForTable(conv.summary, {
+                        issue:    pickFirst(filters.issue_item),
+                        category: pickFirst(filters.issue_category),
+                      });
                       return (
                         <>
                           <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-500">
