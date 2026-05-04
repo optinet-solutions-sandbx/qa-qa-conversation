@@ -853,8 +853,8 @@ export default function DashboardPage() {
                           <tr
                             key={i}
                             className="hover:bg-slate-50 transition-colors cursor-pointer"
-                            onClick={(e) => navToConversations({ issue_category: item.category }, e)}
-                            onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); navToConversations({ issue_category: item.category }, e); } }}
+                            onClick={(e) => navToConversations({ issue_item: item.label }, e)}
+                            onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); navToConversations({ issue_item: item.label }, e); } }}
                           >
                             <td className="py-2.5 pr-4 text-slate-700 text-xs">{item.label}</td>
                             <td className="py-2.5 pr-4 text-slate-400 text-xs">{item.category}</td>
