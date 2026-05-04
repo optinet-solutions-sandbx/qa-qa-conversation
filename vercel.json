@@ -11,10 +11,6 @@
     {
       "path": "/api/cron/sync-asana-statuses",
       "schedule": "*/15 * * * *"
-    },
-    {
-      "path": "/api/cron/drain-reanalyze-issue",
-      "schedule": "7,22,37,52 * * * *"
     }
   ]
 }
