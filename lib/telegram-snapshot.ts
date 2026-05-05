@@ -1,6 +1,68 @@
 import { supabase } from '@/lib/supabase';
-import { getAccountManager } from '@/lib/utils';
+import { getAccountManager, GROUP_TO_AM } from '@/lib/utils';
 import type { Conversation } from '@/lib/types';
+
+// Built once at module load from GROUP_TO_AM so both maps stay in sync with
+// the routing matrix automatically:
+//   AM_PORTFOLIO — descriptor shown in parens after the AM name (e.g.
+//     "Niklas (Christian NON-VIP)") to disambiguate cross-segment routing.
+//   AM_SEGMENT   — classification used to group rows in the snapshot so VIP
+//     AMs come first, then NON-VIP, then OTHER (SoftSwiss/Unassigned). AMs
+//     that handle both halves of a base (e.g. Nik covers VIP+NON-VIP Ada)
+//     land in VIP since "any VIP responsibility → VIP block".
+type AmSegment = 'VIP' | 'NON-VIP' | 'OTHER';
+const { AM_PORTFOLIO, AM_SEGMENT } = (() => {
+  const groupsByAm = new Map<string, string[]>();
+  for (const [group, am] of Object.entries(GROUP_TO_AM)) {
+    const list = groupsByAm.get(am) ?? [];
+    list.push(group);
+    groupsByAm.set(am, list);
+  }
+  const portfolio: Record<string, string> = {};
+  const segment:   Record<string, AmSegment> = {};
+  for (const [am, groups] of groupsByAm) {
+    const bases     = new Set(groups.map((g) => g.replace(/^(non-)?vip_/, '')));
+    const hasVip    = groups.some((g) => g.startsWith('vip_'));
+    const hasNonVip = groups.some((g) => g.startsWith('non-vip_'));
+
+    // Portfolio descriptor
+    if (bases.size !== 1) {
+      portfolio[am] = [...bases].map(capitalise).join(', ');
+    } else {
+      const baseDisplay = capitalise([...bases][0]);
+      if (hasVip && hasNonVip)      portfolio[am] = baseDisplay;             // Nik → "Ada"
+      else if (hasVip)              portfolio[am] = `${baseDisplay} VIP`;    // Christian → "Christian VIP"
+      else if (hasNonVip)           portfolio[am] = `${baseDisplay} NON-VIP`;// Niklas → "Christian NON-VIP"
+      else                          portfolio[am] = baseDisplay;             // SoftSwiss
+    }
+
+    // Segment classification
+    if (hasVip)        segment[am] = 'VIP';
+    else if (hasNonVip) segment[am] = 'NON-VIP';
+    else                segment[am] = 'OTHER';
+  }
+  return { AM_PORTFOLIO: portfolio, AM_SEGMENT: segment };
+})();
+
+const SEGMENT_ORDER: Record<AmSegment, number> = { 'VIP': 0, 'NON-VIP': 1, 'OTHER': 2 };
+
+function capitalise(s: string): string {
+  return s.length > 0 ? s[0].toUpperCase() + s.slice(1) : s;
+}
+
+// Returns the parenthetical to show after the AM name, or null when redundant
+// (SoftSwiss, Unassigned, exact duplicates). Trims the leading "<am> " from
+// the descriptor so "Christian (Christian VIP)" collapses to "Christian (VIP)".
+function descriptorForAm(am: string): string | null {
+  const desc = AM_PORTFOLIO[am];
+  if (!desc) return null;
+  if (desc.toLowerCase() === am.toLowerCase()) return null;
+  const prefix = `${am} `;
+  if (desc.toLowerCase().startsWith(prefix.toLowerCase())) {
+    return desc.slice(prefix.length);
+  }
+  return desc;
+}
 
 // Builds and posts the "Pending Action Cases Snapshot" the cron sends to
 // Telegram. "Pending" matches the dashboard's escalationStats card: an Asana
@@ -67,16 +129,19 @@ function formatSnapshot(byAm: Map<string, AmCounts>, total: number, now: Date): 
   const BOT = '▁'.repeat(20);
 
   const lines: string[] = [];
-  lines.push(`📊 Pending Action Cases Snapshot | 🕒 ${hh}:${mm}`);
+  lines.push(`📊 Pending Action Cases Snapshot | 🕒 ${hh}:${mm} UTC`);
   lines.push(TOP);
   lines.push(`Total Pending: ${total}`);
   lines.push(BOT);
   lines.push('');
 
+  // Sort: VIP block → NON-VIP block → OTHER (SoftSwiss / Unassigned), then
+  // alphabetical by AM name within each block. AMs not in our routing map
+  // (e.g. legacy values, "Unassigned") land in OTHER.
   const sorted = [...byAm.entries()].sort((a, b) => {
-    const ta = a[1].under24 + a[1].over24;
-    const tb = b[1].under24 + b[1].over24;
-    if (ta !== tb) return tb - ta;
+    const sa = SEGMENT_ORDER[AM_SEGMENT[a[0]] ?? 'OTHER'];
+    const sb = SEGMENT_ORDER[AM_SEGMENT[b[0]] ?? 'OTHER'];
+    if (sa !== sb) return sa - sb;
     return a[0].localeCompare(b[0]);
   });
 
@@ -86,11 +151,14 @@ function formatSnapshot(byAm: Map<string, AmCounts>, total: number, now: Date): 
     for (const [am, c] of sorted) {
       const subTotal = c.under24 + c.over24;
       const totalStr = String(subTotal);
+      const desc = descriptorForAm(am);
+      const namePart = desc ? `${am} (${desc})` : am;
       // Visual padding: dashes fill the gap so the count sits at a roughly
       // consistent column. Telegram renders in a proportional font so this
-      // won't be pixel-aligned, but it keeps the rows tidy.
-      const dashes = '—'.repeat(Math.max(3, 18 - am.length - totalStr.length));
-      lines.push(`👤 ${am} ${dashes} ${subTotal}`);
+      // won't be pixel-aligned, but it keeps the rows tidy. Floor bumped to
+      // 30 chars to accommodate longer "<am> (<portfolio>)" labels.
+      const dashes = '—'.repeat(Math.max(3, 30 - namePart.length - totalStr.length));
+      lines.push(`👤 ${namePart} ${dashes} ${subTotal}`);
       lines.push(`   🟢 ${c.under24} pending <24h  |  🔴 ${c.over24} pending >24h`);
       lines.push('');
     }
