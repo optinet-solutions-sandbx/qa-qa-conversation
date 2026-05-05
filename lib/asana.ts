@@ -897,6 +897,14 @@ export async function createAsanaTaskForConversation(
 ): Promise<string | null> {
   if (!isAsanaConfigured()) return null;
 
+  // SoftSwiss players are not managed by an AM and never escalate (see
+  // lib/escalationRules.ts). Refuse here too so admin/test paths that bypass
+  // the gate can't auto-create a "SoftSwiss" column via ensureSectionForAccountManager.
+  if (input.accountManager?.trim().toLowerCase() === 'softswiss') {
+    console.log(`[asana] skip ticket creation for SoftSwiss player (conversation=${input.conversationId})`);
+    return null;
+  }
+
   const token = process.env.ASANA_ACCESS_TOKEN!;
   const projectGid = process.env.ASANA_PROJECT_GID!;
 
