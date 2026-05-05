@@ -177,7 +177,45 @@ export default function AnalysisResultView({ result, conversationDate }: Props) 
       next[k] = v;
     }
     if (conversationDate) next.conversation_date = conversationDate;
-    parsed = next;
+
+    // Lift `dissatisfaction_severity` out of each results[] row so it shows
+    // as its own top-level field next to Resolution Status, instead of as a
+    // column inside the categories/issues sub-table. The current prompt nests
+    // severity per row, but the worst row dictates the chat's overall level.
+    const SEV_KEY = 'dissatisfaction_severity';
+    const hasTopLevelSeverity = Object.prototype.hasOwnProperty.call(next, SEV_KEY);
+    const reordered: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(next)) {
+      if (
+        k === 'results' &&
+        Array.isArray(v) &&
+        v.length > 0 &&
+        typeof v[0] === 'object' &&
+        v[0] !== null &&
+        !Array.isArray(v[0])
+      ) {
+        const rows = v as Record<string, unknown>[];
+        let max = 0;
+        let firstSev: unknown = null;
+        const stripped = rows.map((row) => {
+          const { [SEV_KEY]: sev, ...rest } = row;
+          if (firstSev == null && sev != null && sev !== '') firstSev = sev;
+          const m = String(sev ?? '').match(/[123]/);
+          if (m) {
+            const n = parseInt(m[0], 10);
+            if (n > max) max = n;
+          }
+          return rest;
+        });
+        reordered[k] = stripped;
+        if (!hasTopLevelSeverity) {
+          reordered[SEV_KEY] = max > 0 ? max : firstSev;
+        }
+        continue;
+      }
+      reordered[k] = v;
+    }
+    parsed = reordered;
     return (
       <div className="bg-white rounded-xl border border-slate-200 px-4 py-1 overflow-hidden min-w-0">
         <JsonTable data={parsed} />
