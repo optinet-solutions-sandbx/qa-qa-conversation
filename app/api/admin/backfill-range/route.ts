@@ -27,7 +27,10 @@ async function backfillDate(date: string, apiKey: string): Promise<{ saved: numb
   let saved = 0, skipped = 0, errors = 0;
 
   const searchResults = await searchConversationsByDate(date, apiKey);
-  const allIds = searchResults.map((r) => r.intercom_id);
+  // Only collect finished chats — skip open/snoozed until they're closed.
+  const allIds = searchResults
+    .filter((r) => r.state === 'closed')
+    .map((r) => r.intercom_id);
   if (allIds.length === 0) return { saved, skipped, errors };
 
   const existingIds = await getExistingIntercomIds(allIds);

@@ -66,7 +66,9 @@ export async function POST(req: NextRequest) {
   if (action === 'start') {
     try {
       const all = await searchConversationsByDate(date, apiKey);
-      const ids = all.map((c) => c.intercom_id);
+      // Only collect finished chats — skip open/snoozed until they're closed.
+      const closed = all.filter((c) => c.state === 'closed');
+      const ids = closed.map((c) => c.intercom_id);
       const existingIds = await getExistingIntercomIds(ids);
 
       const job: SyncJob = {

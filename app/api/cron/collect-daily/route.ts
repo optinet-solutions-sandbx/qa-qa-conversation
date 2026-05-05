@@ -37,7 +37,10 @@ async function runCollection(date: string, apiKey: string) {
   let validIds = new Set<string>();
 
   try {
-    // Step 1: search Intercom for all conversation IDs on this date
+    // Step 1: search Intercom for all conversation IDs on this date.
+    // validIds (used for reconcile below) keeps every conversation on the date
+    // — including open/snoozed ones — so we don't delete previously-saved rows
+    // whose state has since flipped back to open.
     const searchResults = await searchConversationsByDate(date, apiKey);
     const allIds = searchResults.map((r) => r.intercom_id);
     validIds = new Set<string>(allIds);
@@ -47,9 +50,14 @@ async function runCollection(date: string, apiKey: string) {
       return;
     }
 
+    // Only collect finished chats — skip open/snoozed until they're closed.
+    const collectIds = searchResults
+      .filter((r) => r.state === 'closed')
+      .map((r) => r.intercom_id);
+
     // Step 2: skip IDs already in the database (idempotent)
-    const existingIds = await getExistingIntercomIds(allIds);
-    const newIds = allIds.filter((id) => !existingIds.has(id));
+    const existingIds = await getExistingIntercomIds(collectIds);
+    const newIds = collectIds.filter((id) => !existingIds.has(id));
     skipped = existingIds.size;
 
     // Step 3: fetch + save each new conversation

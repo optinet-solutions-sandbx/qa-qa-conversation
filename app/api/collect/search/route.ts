@@ -16,9 +16,11 @@ export async function GET(req: NextRequest) {
 
   try {
     const all = await searchConversationsByDate(date, apiKey);
-    const existingIds = await getExistingIntercomIds(all.map((c) => c.intercom_id));
+    // Only collect finished chats — skip open/snoozed until they're closed.
+    const closed = all.filter((c) => c.state === 'closed');
+    const existingIds = await getExistingIntercomIds(closed.map((c) => c.intercom_id));
 
-    const ids = all.map((c) => c.intercom_id);
+    const ids = closed.map((c) => c.intercom_id);
     const newIds = ids.filter((id) => !existingIds.has(id));
 
     return NextResponse.json({ ids, newIds, total: ids.length, newCount: newIds.length });
