@@ -6,7 +6,7 @@ import IssueHeatmap from '@/components/dashboard/IssueHeatmap';
 import { AM_NAMES, SEGMENTS, VIP_LEVELS } from '@/lib/utils';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line, Legend, AreaChart, Area,
+  PieChart, Pie, Cell, LineChart, Line, Legend, AreaChart, Area, Sector,
 } from 'recharts';
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -158,6 +158,44 @@ function shortDate(iso: string) {
 function isNewTabClick(e?: { ctrlKey?: boolean; metaKey?: boolean; button?: number }): boolean {
   if (!e) return false;
   return Boolean(e.ctrlKey) || Boolean(e.metaKey) || e.button === 1;
+}
+
+// Word-wrap a long label into N lines so it can render under a narrow bar
+// without rotation. Greedy fit by character count — good enough for our
+// issue/category labels which are short phrases.
+function wrapLabel(text: string, maxCharsPerLine = 18): string[] {
+  if (!text || text.length <= maxCharsPerLine) return [text];
+  const words = text.split(' ');
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    const tentative = current.length === 0 ? word : `${current} ${word}`;
+    if (tentative.length <= maxCharsPerLine) {
+      current = tentative;
+    } else {
+      if (current) lines.push(current);
+      current = word;
+    }
+  }
+  if (current) lines.push(current);
+  return lines;
+}
+
+// Custom recharts X-axis tick: renders each line as a <tspan> centered under
+// the bar. Used by the Spikes chart so 4-word labels stop overflowing the
+// chart's left edge.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function WrappedXAxisTick({ x, y, payload }: any) {
+  const lines = wrapLabel(String(payload.value ?? ''), 18);
+  return (
+    <g transform={`translate(${x},${y + 4})`}>
+      <text textAnchor="middle" fill="var(--chart-axis-label)" fontSize={10}>
+        {lines.map((line, i) => (
+          <tspan key={i} x={0} dy={i === 0 ? 12 : 12}>{line}</tspan>
+        ))}
+      </text>
+    </g>
+  );
 }
 
 // ── Stat card ──────────────────────────────────────────────────────────────
@@ -697,6 +735,32 @@ export default function DashboardPage() {
 
       {!loading && !error && data && (
         <>
+          {/* Stat cards — Conversation volume */}
+          <div className="grid grid-cols-2 lg:grid-cols-3 gap-4">
+            <StatCard
+              label="Total Conversations"
+              value={data.overview.total}
+              accent="cyan"
+              icon="doc"
+              onClick={(e) => navToConversations({}, e)}
+            />
+            <StatCard
+              label="Analyzed"
+              value={data.overview.analyzed}
+              sub={`${data.overview.analyzedPct}% of total`}
+              accent="teal"
+              icon="check"
+              onClick={(e) => navToConversations({ analyzed: 'true' }, e)}
+            />
+            <StatCard
+              label="Unanalyzed"
+              value={data.overview.unanalyzed}
+              accent="amber"
+              icon="clock"
+              onClick={(e) => navToConversations({ analyzed: 'false' }, e)}
+            />
+          </div>
+
           {/* Stat cards — Asana escalation metrics */}
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
             <StatCard
@@ -756,16 +820,38 @@ export default function DashboardPage() {
                     onMouseDown={(d: any, e: any) => { if (e?.button === 1 && d?.activeLabel) { e.preventDefault?.(); navToConversations({ issue_item: d.activeLabel }, e); } }}
                   >
                     <defs>
-                      <linearGradient id="top5Bar" x1="0" y1="0" x2="1" y2="0">
-                        <stop offset="0%"   stopColor="#22d3ee" />
-                        <stop offset="100%" stopColor="#60a5fa" />
+                      {/* One horizontal neon gradient per bar — dark→bright left-to-right
+                          so each row reads as its own glowing accent against the dark surface. */}
+                      <linearGradient id="top5Bar0" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#0e7490" /><stop offset="100%" stopColor="#22d3ee" />
                       </linearGradient>
+                      <linearGradient id="top5Bar1" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#1e40af" /><stop offset="100%" stopColor="#60a5fa" />
+                      </linearGradient>
+                      <linearGradient id="top5Bar2" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#c2410c" /><stop offset="100%" stopColor="#fb923c" />
+                      </linearGradient>
+                      <linearGradient id="top5Bar3" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#be123c" /><stop offset="100%" stopColor="#f472b6" />
+                      </linearGradient>
+                      <linearGradient id="top5Bar4" x1="0" y1="0" x2="1" y2="0">
+                        <stop offset="0%" stopColor="#86198f" /><stop offset="100%" stopColor="#e879f9" />
+                      </linearGradient>
+                      {/* Soft glow halo applied to the hovered bar via activeBar. */}
+                      <filter id="barGlowTop5" x="-50%" y="-50%" width="200%" height="200%">
+                        <feGaussianBlur stdDeviation="4" result="blur" />
+                        <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                      </filter>
                     </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                     <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                    <YAxis type="category" dataKey="label" width={140} tick={{ fontSize: 11, fill: '#475569' }} />
-                    <Tooltip content={<ChartTooltip />} />
-                    <Bar dataKey="count" fill="url(#top5Bar)" radius={[0, 4, 4, 0]} name="Conversations" label={{ position: 'right', fill: '#94a3b8', fontSize: 11 }} />
+                    <YAxis type="category" dataKey="label" width={160} tick={{ fontSize: 11, fill: 'var(--chart-axis-label)' }} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
+                    <Bar dataKey="count" radius={[0, 6, 6, 0]} name="Conversations" label={{ position: 'right', fill: '#94a3b8', fontSize: 11 }} activeBar={{ filter: 'url(#barGlowTop5)' }}>
+                      {data.topItems.slice(0, 5).map((_, i) => (
+                        <Cell key={i} fill={`url(#top5Bar${i})`} />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -777,15 +863,37 @@ export default function DashboardPage() {
               {data.issueSpikes.length === 0 ? (
                 <Empty message="Not enough data for the last 2 completed days" />
               ) : (
-                <ResponsiveContainer width="100%" height={240}>
-                  <BarChart data={data.issueSpikes} margin={{ top: 8, right: 16, left: -10, bottom: 0 }}>
+                <ResponsiveContainer width="100%" height={290}>
+                  <BarChart data={data.issueSpikes} margin={{ top: 8, right: 12, left: -10, bottom: 24 }}>
+                    <defs>
+                      {/* Vertical neon gradients — Today is the bright/saturated bar,
+                          Yesterday is a dimmer, more transparent version of the same
+                          hue so the comparison reads as "now vs. fading reference". */}
+                      <linearGradient id="spikeToday" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%"   stopColor="#22d3ee" stopOpacity={1}   />
+                        <stop offset="100%" stopColor="#0e7490" stopOpacity={0.85} />
+                      </linearGradient>
+                      <linearGradient id="spikeYesterday" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%"   stopColor="#67e8f9" stopOpacity={0.65} />
+                        <stop offset="100%" stopColor="#155e75" stopOpacity={0.35} />
+                      </linearGradient>
+                      <filter id="barGlowSpike" x="-50%" y="-50%" width="200%" height="200%">
+                        <feGaussianBlur stdDeviation="4" result="blur" />
+                        <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                      </filter>
+                    </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
-                    <XAxis dataKey="issue" tick={{ fontSize: 10, fill: '#94a3b8' }} interval={0} />
+                    <XAxis
+                      dataKey="issue"
+                      interval={0}
+                      tick={<WrappedXAxisTick />}
+                      height={70}
+                    />
                     <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} />
-                    <Tooltip content={<ChartTooltip />} />
-                    <Legend wrapperStyle={{ fontSize: 11 }} />
-                    <Bar dataKey="today"     name="Today"     fill="#06b6d4" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="yesterday" name="Yesterday" fill="#67e8f9" radius={[4, 4, 0, 0]} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
+                    <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} iconType="circle" iconSize={8} verticalAlign="bottom" />
+                    <Bar dataKey="today"     name="Today"     fill="url(#spikeToday)"     radius={[6, 6, 0, 0]} activeBar={{ filter: 'url(#barGlowSpike)' }} />
+                    <Bar dataKey="yesterday" name="Yesterday" fill="url(#spikeYesterday)" radius={[6, 6, 0, 0]} activeBar={{ filter: 'url(#barGlowSpike)' }} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
@@ -816,7 +924,7 @@ export default function DashboardPage() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 9, fill: '#94a3b8' }} interval={0} angle={-45} textAnchor="end" height={50} />
                     <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} />
-                    <Tooltip content={<ChartTooltip />} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
                     {data.dissatisfactionTrend.issues.map((issue, i) => (
                       <Area
@@ -910,7 +1018,7 @@ export default function DashboardPage() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} interval={0} angle={-45} textAnchor="end" />
                     <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                    <Tooltip content={<ChartTooltip />} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
                     <Line
                       type="monotone"
                       dataKey="count"
@@ -932,6 +1040,12 @@ export default function DashboardPage() {
                 <>
                   <ResponsiveContainer width="100%" height={180}>
                     <PieChart style={{ cursor: 'pointer' }}>
+                      <defs>
+                        <filter id="pieGlow" x="-50%" y="-50%" width="200%" height="200%">
+                          <feGaussianBlur stdDeviation="4" result="blur" />
+                          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                        </filter>
+                      </defs>
                       <Pie
                         data={data.resolutionBreakdown}
                         dataKey="count"
@@ -941,6 +1055,10 @@ export default function DashboardPage() {
                         innerRadius={50}
                         outerRadius={80}
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        activeShape={(props: any) => (
+                          <Sector {...props} outerRadius={props.outerRadius + 4} style={{ filter: 'url(#pieGlow)' }} />
+                        )}
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         onClick={(d: any, _i: number, e: any) => { if (d?.label) navToConversations({ resolution_status: d.label }, e); }}
                         // eslint-disable-next-line @typescript-eslint/no-explicit-any
                         onMouseDown={(d: any, _i: number, e: any) => { if (e?.button === 1 && d?.label) { e.preventDefault?.(); navToConversations({ resolution_status: d.label }, e); } }}
@@ -949,7 +1067,7 @@ export default function DashboardPage() {
                           <Cell key={i} fill={RESOLUTION_COLORS[entry.label] ?? COLORS[i % COLORS.length]} />
                         ))}
                       </Pie>
-                      <Tooltip content={<ChartTooltip />} />
+                      <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
                     </PieChart>
                   </ResponsiveContainer>
                   <div className="space-y-1.5 mt-2">
@@ -989,17 +1107,36 @@ export default function DashboardPage() {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     onMouseDown={(data: any, e: any) => { if (e?.button === 1 && data?.activeLabel) { e.preventDefault?.(); navToConversations({ dissatisfaction_severity: data.activeLabel }, e); } }}
                   >
+                    <defs>
+                      {/* One vertical gradient per severity bucket — fades from the
+                          base accent at top to a darkened version at bottom, giving
+                          each bar a glowing/neon look against the dark surface. */}
+                      {data.severityBreakdown.map((entry, i) => {
+                        const base = SEVERITY_COLORS[entry.label] ?? COLORS[i % COLORS.length];
+                        return (
+                          <linearGradient key={entry.label} id={`sevBar-${i}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%"   stopColor={base} stopOpacity={1}    />
+                            <stop offset="100%" stopColor={base} stopOpacity={0.35} />
+                          </linearGradient>
+                        );
+                      })}
+                      <filter id="barGlowSev" x="-50%" y="-50%" width="200%" height="200%">
+                        <feGaussianBlur stdDeviation="4" result="blur" />
+                        <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                      </filter>
+                    </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                     <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                    <Tooltip content={<ChartTooltip />} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
                     <Bar
                       dataKey="count"
-                      radius={[4, 4, 0, 0]}
+                      radius={[6, 6, 0, 0]}
                       name="Count"
+                      activeBar={{ filter: 'url(#barGlowSev)' }}
                     >
-                      {data.severityBreakdown.map((entry, i) => (
-                        <Cell key={i} fill={SEVERITY_COLORS[entry.label] ?? COLORS[i % COLORS.length]} />
+                      {data.severityBreakdown.map((_, i) => (
+                        <Cell key={i} fill={`url(#sevBar-${i})`} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -1042,17 +1179,33 @@ export default function DashboardPage() {
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     onMouseDown={(data: any, e: any) => { if (e?.button === 1 && data?.activeLabel) { e.preventDefault?.(); navToConversations({ language: data.activeLabel }, e); } }}
                   >
+                    <defs>
+                      {data.languageBreakdown.map((_, i) => {
+                        const base = COLORS[i % COLORS.length];
+                        return (
+                          <linearGradient key={i} id={`langBar-${i}`} x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="0%"   stopColor={base} stopOpacity={1}    />
+                            <stop offset="100%" stopColor={base} stopOpacity={0.35} />
+                          </linearGradient>
+                        );
+                      })}
+                      <filter id="barGlowLang" x="-50%" y="-50%" width="200%" height="200%">
+                        <feGaussianBlur stdDeviation="4" result="blur" />
+                        <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                      </filter>
+                    </defs>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                     <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                    <Tooltip content={<ChartTooltip />} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
                     <Bar
                       dataKey="count"
-                      radius={[4, 4, 0, 0]}
+                      radius={[6, 6, 0, 0]}
                       name="Conversations"
+                      activeBar={{ filter: 'url(#barGlowLang)' }}
                     >
                       {data.languageBreakdown.map((_, i) => (
-                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                        <Cell key={i} fill={`url(#langBar-${i})`} />
                       ))}
                     </Bar>
                   </BarChart>
@@ -1138,16 +1291,43 @@ export default function DashboardPage() {
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   onMouseDown={(d: any, e: any) => { if (e?.button === 1 && d?.activeLabel) { e.preventDefault?.(); navToConversations({ issue_category: d.activeLabel }, e); } }}
                 >
+                  <defs>
+                    {/* Cyan→violet sweep across the full list — gives the long
+                        category column a futuristic gradient instead of a wall
+                        of identical pure-blue bars. */}
+                    {data.topCategories.map((_, i) => {
+                      const t = data.topCategories.length > 1 ? i / (data.topCategories.length - 1) : 0;
+                      // Lerp between cyan (#22d3ee) and violet (#a78bfa)
+                      const r = Math.round(34  + (167 - 34)  * t);
+                      const g = Math.round(211 + (139 - 211) * t);
+                      const b = Math.round(238 + (250 - 238) * t);
+                      const base = `rgb(${r},${g},${b})`;
+                      return (
+                        <linearGradient key={i} id={`catBar-${i}`} x1="0" y1="0" x2="1" y2="0">
+                          <stop offset="0%"   stopColor={base} stopOpacity={0.35} />
+                          <stop offset="100%" stopColor={base} stopOpacity={1}    />
+                        </linearGradient>
+                      );
+                    })}
+                    <filter id="barGlowCat" x="-50%" y="-50%" width="200%" height="200%">
+                      <feGaussianBlur stdDeviation="4" result="blur" />
+                      <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                    </filter>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                   <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                  <YAxis type="category" dataKey="label" width={220} tick={{ fontSize: 11, fill: '#475569' }} />
-                  <Tooltip content={<ChartTooltip />} />
+                  <YAxis type="category" dataKey="label" width={240} tick={{ fontSize: 11, fill: 'var(--chart-axis-label)' }} />
+                  <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
                   <Bar
                     dataKey="count"
-                    fill="#3b82f6"
-                    radius={[0, 4, 4, 0]}
+                    radius={[0, 6, 6, 0]}
                     name="Conversations"
-                  />
+                    activeBar={{ filter: 'url(#barGlowCat)' }}
+                  >
+                    {data.topCategories.map((_, i) => (
+                      <Cell key={i} fill={`url(#catBar-${i})`} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             )}

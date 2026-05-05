@@ -388,11 +388,10 @@ export async function GET(req: NextRequest) {
     // A "live" escalation is a conversation with an Asana task that hasn't been
     // deleted in Asana — same row set used by dbGetAsanaReportingMetrics so the
     // dashboard cards line up with the Report Page totals.
-    // - Open vs Resolved is determined by asana_completed_at (set by the cron
-    //   sync when an AM closes the Asana task).
-    // - Pending <24h vs >24h splits the OPEN bucket by ticket age (now -
-    //   analyzed_at, since analyzed_at is what the existing reporting helper
-    //   uses as a stand-in for ticket creation time).
+    // - Total/Resolved respect the global filters (date/brand/agent/AM).
+    // - Pending <24h / >24h are operational counters that ignore ALL filters:
+    //   they show every currently-open Asana ticket regardless of view, since
+    //   that's the SLA pressure the user needs to see at a glance.
     const NOW_MS = Date.now();
     const DAY_MS = 24 * 60 * 60 * 1000;
     const escalatedRows = filteredRows.filter(
@@ -400,15 +399,32 @@ export async function GET(req: NextRequest) {
     );
     const totalEscalations = escalatedRows.length;
     const resolvedEscalations = escalatedRows.filter((r) => r.asana_completed_at != null).length;
+
+    // Unfiltered open-pending query — small payload, just enough to bucket by age.
     let pendingUnder24h = 0;
     let pendingOver24h = 0;
-    for (const r of escalatedRows) {
-      if (r.asana_completed_at != null) continue;
-      const created = r.analyzed_at as string | null;
-      const ageMs = created ? NOW_MS - new Date(created).getTime() : Infinity;
-      if (ageMs < DAY_MS) pendingUnder24h += 1;
-      else                pendingOver24h  += 1;
+    {
+      let pIdx = 0;
+      while (true) {
+        const { data: page } = await supabase
+          .from('conversations')
+          .select('analyzed_at')
+          .not('asana_task_gid', 'is', null)
+          .is('asana_task_deleted_at', null)
+          .is('asana_completed_at', null)
+          .order('analyzed_at', { ascending: false })
+          .range(pIdx, pIdx + PAGE_SIZE - 1) as { data: Array<{ analyzed_at: string | null }> | null };
+        if (!page || page.length === 0) break;
+        for (const r of page) {
+          const ageMs = r.analyzed_at ? NOW_MS - new Date(r.analyzed_at).getTime() : Infinity;
+          if (ageMs < DAY_MS) pendingUnder24h += 1;
+          else                pendingOver24h  += 1;
+        }
+        if (page.length < PAGE_SIZE) break;
+        pIdx += PAGE_SIZE;
+      }
     }
+
     const closureRate = totalEscalations > 0
       ? Math.round((resolvedEscalations / totalEscalations) * 100)
       : 0;

@@ -84,12 +84,18 @@ export default function IssueHeatmap({
               // shade so white reads cleanly against every step. Empty cells
               // don't render text so their fg colour doesn't matter.
               const fg = '#ffffff';
+              // Glow halo on hover — `--cell-color` is set inline so the box-shadow
+              // picks up each cell's own gradient shade (cells share the same
+              // hover class but glow in their own colour). Skipped for v=0 cells
+              // so the empty grid background doesn't light up.
+              const glowable = v > 0;
               return (
                 <div
                   key={c.key}
-                  className={`rounded-sm flex items-center justify-center ${onCellClick ? 'cursor-pointer hover:opacity-80' : ''}`}
-                  style={{ background: bg, height: cellHeight, color: fg }}
+                  className={`rounded-sm flex items-center justify-center transition-shadow duration-150 ${onCellClick ? 'cursor-pointer' : ''} ${glowable ? 'hover:shadow-[0_0_14px_var(--cell-color),0_0_4px_var(--cell-color)]' : ''}`}
+                  style={{ background: bg, height: cellHeight, color: fg, ['--cell-color' as string]: bg } as React.CSSProperties}
                   onClick={onCellClick ? (e) => onCellClick(r.key, c.key, v, e) : undefined}
+                  onMouseDown={onCellClick ? (e) => { if (e.button === 1) { e.preventDefault(); onCellClick(r.key, c.key, v, e); } } : undefined}
                   title={`${r.label} · ${c.label}: ${v}`}
                 >
                   {showCounts && v > 0 ? v : ''}

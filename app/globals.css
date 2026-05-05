@@ -76,3 +76,10 @@ html.dark input::placeholder { color: #6b7892; }
    the populated cells visually dominate. */
 :root      { --heatmap-empty: #f1f5f9; }
 html.dark  { --heatmap-empty: #1c2336; }
+
+/* Recharts axis label colour — primary category labels (long Y-axis text on
+   bar charts, rotated X-axis labels on the spikes chart). Recharts only
+   accepts a flat fill string per tick, so we expose it as a CSS var and let
+   it flip with the theme. Numeric axes stick with the static slate-400. */
+:root      { --chart-axis-label: #475569; } /* slate-600 — readable on white */
+html.dark  { --chart-axis-label: #cbd5e1; } /* slate-300 — readable on dark  */
