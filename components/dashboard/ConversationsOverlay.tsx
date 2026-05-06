@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { Conversation } from '@/lib/types';
 import { getSegment, getVipLevel, getAccountManager, getBacklinkFull, parseSummaryForTable, cleanPlayerName } from '@/lib/utils';
+import { parseAnalysisSummary, normalizeSeverity } from '@/lib/analyticsFilters';
 
 const INTERCOM_APP_ID = process.env.NEXT_PUBLIC_INTERCOM_APP_ID ?? '';
 
@@ -89,6 +90,20 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
     return from ?? to ?? todayISO();
   }
 
+  // Severity: parse from summary JSON the same way the dashboard chart does so
+  // the Level 0/1/2/3 buckets here always match the slice that opened this list.
+  function severityLabel(conv: Conversation): string | null {
+    return normalizeSeverity(parseAnalysisSummary(conv.summary).dissatisfaction_severity);
+  }
+
+  // Resolution: fold null/"Unknown" into "Unresolved" to mirror the dashboard's
+  // resolution breakdown (commit 1e091f3 — the Unknown bucket was tiny + noisy).
+  function resolutionLabel(conv: Conversation): string {
+    const v = parseAnalysisSummary(conv.summary).resolution_status?.trim();
+    if (!v || v.toLowerCase() === 'unknown') return 'Unresolved';
+    return v;
+  }
+
   // RFC4180-ish escape: wrap in quotes when the value contains a comma, quote,
   // or newline; double any embedded quotes.
   function csvCell(v: unknown): string {
@@ -112,9 +127,9 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
       const rows: Conversation[] = data.conversations ?? data.items ?? [];
 
       const headers = [
-        'Date', 'Category', 'Issue', 'Summary', 'Segment', 'VIP Level',
-        'Player Name', 'Chat Agent', 'Account Manager', 'Brand', 'Language',
-        'Country', 'Chat URL', 'Account URL', 'Analysis URL',
+        'Date', 'Category', 'Issue', 'Summary', 'Severity', 'Resolution',
+        'Segment', 'VIP Level', 'Player Name', 'Chat Agent', 'Account Manager',
+        'Brand', 'Language', 'Country', 'Chat URL', 'Account URL', 'Analysis URL',
       ];
       const lines = [headers.join(',')];
       for (const conv of rows) {
@@ -133,6 +148,8 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
           ai.category ?? '',
           ai.issue || conv.ai_issue_summary || '',
           ai.summary ?? '',
+          severityLabel(conv) ?? '',
+          resolutionLabel(conv),
           getSegment(conv) ?? '',
           getVipLevel(conv) ?? '',
           cleanPlayerName(conv.player_name) ?? '',
@@ -233,6 +250,8 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                   <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Category</th>
                   <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Issue</th>
                   <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Summary</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Severity</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Resolution</th>
                   <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Segment</th>
                   <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">VIP Level</th>
                   <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Player Name</th>
@@ -275,6 +294,28 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                         </>
                       );
                     })()}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {(() => {
+                        const sev = severityLabel(conv);
+                        if (!sev) return <span className="text-xs text-slate-400">—</span>;
+                        const color =
+                          sev === 'Level 3' ? 'text-red-600' :
+                          sev === 'Level 2' ? 'text-orange-600' :
+                          sev === 'Level 1' ? 'text-amber-600' :
+                          'text-emerald-600';
+                        return <span className={`text-xs font-bold ${color}`}>{sev}</span>;
+                      })()}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      {(() => {
+                        const res = resolutionLabel(conv);
+                        const color =
+                          res === 'Resolved' ? 'text-emerald-600' :
+                          res === 'Partially Resolved' ? 'text-amber-600' :
+                          'text-red-600';
+                        return <span className={`text-xs font-bold ${color}`}>{res}</span>;
+                      })()}
+                    </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       {(() => {
                         const seg = getSegment(conv);
