@@ -44,6 +44,7 @@ export async function GET(req: NextRequest) {
   const categories     = searchParams.getAll('category');
   const issues         = searchParams.getAll('issue');
   const severities     = searchParams.getAll('severity');
+  const resolutions    = searchParams.getAll('resolution');
   const languages      = searchParams.getAll('language');
   const segments       = searchParams.getAll('segment');
   const vipLevels      = searchParams.getAll('vipLevel');
@@ -267,6 +268,19 @@ export async function GET(req: NextRequest) {
       const keep = filteredParsed.map((p) => {
         const norm = normalizeSeverity(p.severity);
         return norm != null && targets.has(norm);
+      });
+      filteredRows   = filteredRows.filter((_, i) => keep[i]);
+      filteredParsed = filteredParsed.filter((_, i) => keep[i]);
+    }
+
+    const hasResolutionFilter = resolutions.length > 0;
+    if (hasResolutionFilter) {
+      const targets = new Set(resolutions.map((r) => r.toLowerCase()));
+      const wantUnknown = targets.has('unknown');
+      const keep = filteredParsed.map((p) => {
+        const val = p.resolution_status?.trim().toLowerCase();
+        if (!val) return wantUnknown;
+        return targets.has(val);
       });
       filteredRows   = filteredRows.filter((_, i) => keep[i]);
       filteredParsed = filteredParsed.filter((_, i) => keep[i]);

@@ -441,6 +441,7 @@ export default function DashboardPage() {
   const [categories, setCategories]             = useState<string[]>([]);
   const [issues, setIssues]                     = useState<string[]>([]);
   const [severities, setSeverities]             = useState<string[]>([]);
+  const [resolutions, setResolutions]           = useState<string[]>([]);
 
   const navToConversations = useCallback((extra: Record<string, string>, e?: React.MouseEvent | MouseEvent) => {
     const filters: Record<string, string | string[]> = {};
@@ -460,6 +461,7 @@ export default function DashboardPage() {
     passMulti('issue_category',  categories);
     passMulti('issue_item',      issues);
     passMulti('dissatisfaction_severity', severities.map((s) => `Level ${s}`));
+    passMulti('resolution_status', resolutions);
     Object.entries(extra).forEach(([k, v]) => { if (v) filters[k] = v; });
 
     // Build a human-readable title from the extra filters
@@ -488,7 +490,7 @@ export default function DashboardPage() {
     setOverlayTitle(title);
     setOverlayFilters(filters);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo, brands, agents, accountManagers, segments, vipLevels, languages, countries, categories, issues, severities]);
+  }, [dateFrom, dateTo, brands, agents, accountManagers, segments, vipLevels, languages, countries, categories, issues, severities, resolutions]);
 
   // Restore overlay state from URL (used when a new tab is opened via Ctrl/middle-click)
   useEffect(() => {
@@ -520,6 +522,7 @@ export default function DashboardPage() {
     categories.forEach((c)      => params.append('category',       c));
     issues.forEach((i)          => params.append('issue',          i));
     severities.forEach((s)      => params.append('severity',       s));
+    resolutions.forEach((r)     => params.append('resolution',     r));
 
     const cacheKey = params.toString();
     const force = forceRef.current;
@@ -554,7 +557,7 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, brands, agents, accountManagers, segments, vipLevels, languages, countries, categories, issues, severities]);
+  }, [dateFrom, dateTo, brands, agents, accountManagers, segments, vipLevels, languages, countries, categories, issues, severities, resolutions]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -704,6 +707,16 @@ export default function DashboardPage() {
           />
         </div>
         <div>
+          <label className="block text-xs font-medium text-slate-500 mb-1">Resolution</label>
+          <MultiSelectFilter
+            options={['Resolved', 'Partially Resolved', 'Unresolved', 'Unknown']}
+            selected={resolutions}
+            onChange={setResolutions}
+            placeholder="All resolutions"
+            emptyText="No resolutions"
+          />
+        </div>
+        <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Category</label>
           <MultiSelectFilter
             options={categoryOptions}
@@ -728,9 +741,9 @@ export default function DashboardPage() {
             disabled={categories.length === 0}
           />
         </div>
-        {(dateFrom || dateTo || brands.length > 0 || agents.length > 0 || accountManagers.length > 0 || segments.length > 0 || vipLevels.length > 0 || languages.length > 0 || countries.length > 0 || severities.length > 0 || categories.length > 0 || issues.length > 0) && (
+        {(dateFrom || dateTo || brands.length > 0 || agents.length > 0 || accountManagers.length > 0 || segments.length > 0 || vipLevels.length > 0 || languages.length > 0 || countries.length > 0 || severities.length > 0 || resolutions.length > 0 || categories.length > 0 || issues.length > 0) && (
           <button
-            onClick={() => { setDateFrom(''); setDateTo(''); setBrands([]); setAgents([]); setAccountManagers([]); setSegments([]); setVipLevels([]); setLanguages([]); setCountries([]); setSeverities([]); setCategories([]); setIssues([]); }}
+            onClick={() => { setDateFrom(''); setDateTo(''); setBrands([]); setAgents([]); setAccountManagers([]); setSegments([]); setVipLevels([]); setLanguages([]); setCountries([]); setSeverities([]); setResolutions([]); setCategories([]); setIssues([]); }}
             className="text-xs text-slate-400 hover:text-slate-600 underline pb-1.5"
           >
             Clear filters
