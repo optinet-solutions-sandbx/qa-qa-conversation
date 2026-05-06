@@ -23,6 +23,7 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
   const [page, setPage]                   = useState(0);
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState<string | null>(null);
+  const [downloading, setDownloading]     = useState(false);
   const overlayRef                        = useRef<HTMLDivElement>(null);
 
   const totalPages = Math.ceil(total / PER_PAGE);
@@ -76,6 +77,93 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
     return Array.isArray(v) ? (v[0] ?? null) : v;
   }
 
+  function todayISO() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+
+  function filenameDateSuffix(): string {
+    const from = pickFirst(filters.dateFrom);
+    const to   = pickFirst(filters.dateTo);
+    if (from && to && from !== to) return `${from}_to_${to}`;
+    return from ?? to ?? todayISO();
+  }
+
+  // RFC4180-ish escape: wrap in quotes when the value contains a comma, quote,
+  // or newline; double any embedded quotes.
+  function csvCell(v: unknown): string {
+    if (v === null || v === undefined) return '';
+    const s = String(v);
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+
+  async function handleDownload() {
+    if (downloading || total === 0) return;
+    setDownloading(true);
+    try {
+      const params = new URLSearchParams({ page: '0', perPage: '10000' });
+      Object.entries(filters).forEach(([k, v]) => {
+        if (Array.isArray(v)) v.forEach((s) => { if (s) params.append(k, s); });
+        else if (v)           params.set(k, v);
+      });
+      const res = await fetch(`/api/conversations?${params}`);
+      if (!res.ok) throw new Error('Failed to load conversations');
+      const data = await res.json();
+      const rows: Conversation[] = data.conversations ?? data.items ?? [];
+
+      const headers = [
+        'Date', 'Category', 'Issue', 'Summary', 'Segment', 'VIP Level',
+        'Player Name', 'Chat Agent', 'Account Manager', 'Brand', 'Language',
+        'Country', 'Chat URL', 'Account URL', 'Analysis URL',
+      ];
+      const lines = [headers.join(',')];
+      for (const conv of rows) {
+        const ai = parseSummaryForTable(conv.summary, {
+          issue:    pickFirst(filters.issue_item),
+          category: pickFirst(filters.issue_category),
+        });
+        const chatUrl = conv.intercom_id && INTERCOM_APP_ID
+          ? `https://app.intercom.com/a/apps/${INTERCOM_APP_ID}/conversations/${conv.intercom_id}`
+          : '';
+        const analysisUrl = typeof window !== 'undefined'
+          ? `${window.location.origin}/conversations/${conv.id}`
+          : `/conversations/${conv.id}`;
+        lines.push([
+          fmtDate(conv.intercom_created_at),
+          ai.category ?? '',
+          ai.issue || conv.ai_issue_summary || '',
+          ai.summary ?? '',
+          getSegment(conv) ?? '',
+          getVipLevel(conv) ?? '',
+          cleanPlayerName(conv.player_name) ?? '',
+          conv.agent_name ?? '',
+          getAccountManager(conv) ?? '',
+          conv.brand ?? '',
+          conv.language ?? '',
+          conv.player_country ?? '',
+          chatUrl,
+          getBacklinkFull(conv) ?? '',
+          analysisUrl,
+        ].map(csvCell).join(','));
+      }
+
+      // UTF-8 BOM so Excel reads accented names (e.g. "NOORA LEPPÄ") correctly.
+      const blob = new Blob(['﻿' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `conversations_${filenameDateSuffix()}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   return (
     <div
       ref={overlayRef}
@@ -94,15 +182,33 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
               </p>
             )}
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
-            aria-label="Close"
-          >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={handleDownload}
+              disabled={loading || downloading || total === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              aria-label="Download CSV"
+              title="Download CSV"
+            >
+              {downloading ? (
+                <div className="w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              ) : (
+                <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5 5-5M12 15V3" />
+                </svg>
+              )}
+              <span>{downloading ? 'Preparing…' : 'Download'}</span>
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+              aria-label="Close"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Body */}
