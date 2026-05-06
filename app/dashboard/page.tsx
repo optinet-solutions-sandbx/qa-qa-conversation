@@ -891,7 +891,7 @@ export default function DashboardPage() {
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Resolution</label>
           <MultiSelectFilter
-            options={['Resolved', 'Partially Resolved', 'Unresolved', 'Unknown']}
+            options={['Resolved', 'Partially Resolved', 'Unresolved']}
             selected={resolutions}
             onChange={setResolutions}
             placeholder="All resolutions"

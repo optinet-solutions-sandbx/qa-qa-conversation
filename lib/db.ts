@@ -579,10 +579,12 @@ export async function loadConversationsWithJsonFilter(
   const resolutions = asArray(filters.resolution_status);
   if (resolutions.length > 0) {
     const targets = new Set(resolutions.map((v) => v.toLowerCase()));
-    const wantUnknown = targets.has('unknown');
+    // Unknown/null is folded into Unresolved in the dashboard, so clicking
+    // the Unresolved slice (or filtering by Unresolved) must surface both.
+    const wantUnresolved = targets.has('unresolved');
     filtered = filtered.filter(({ summary }) => {
       const val = summary.resolution_status?.trim().toLowerCase();
-      if (!val) return wantUnknown;
+      if (!val || val === 'unknown') return wantUnresolved;
       return targets.has(val);
     });
   }

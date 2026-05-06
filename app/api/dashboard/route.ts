@@ -337,10 +337,12 @@ export async function GET(req: NextRequest) {
     const hasResolutionFilter = resolutions.length > 0;
     if (hasResolutionFilter) {
       const targets = new Set(resolutions.map((r) => r.toLowerCase()));
-      const wantUnknown = targets.has('unknown');
+      // Unknown/null is folded into Unresolved in the UI, so the Unresolved
+      // filter must match both literal "unresolved" and missing/unknown values.
+      const wantUnresolved = targets.has('unresolved');
       const keep = filteredParsed.map((p) => {
         const val = p.resolution_status?.trim().toLowerCase();
-        if (!val) return wantUnknown;
+        if (!val || val === 'unknown') return wantUnresolved;
         return targets.has(val);
       });
       filteredRows   = filteredRows.filter((_, i) => keep[i]);
@@ -386,7 +388,13 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Resolution breakdown ─────────────────────────────────────────────
-    const resolutionBreakdown = countBy(filteredParsed, (p) => p.resolution_status);
+    // Fold null/"Unknown" into "Unresolved" — the Unknown bucket was tiny
+    // (single digits) and noisy, so we keep the chart clean by merging.
+    const resolutionBreakdown = countBy(filteredParsed, (p) => {
+      const v = p.resolution_status?.trim();
+      if (!v || v.toLowerCase() === 'unknown') return 'Unresolved';
+      return v;
+    });
 
     // ── Severity breakdown ───────────────────────────────────────────────
     // The current prompt asks the AI for a numeric severity (0/1/2/3) only
