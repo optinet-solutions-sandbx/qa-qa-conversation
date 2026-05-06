@@ -109,3 +109,35 @@ html.dark  { --heatmap-empty: #1c2336; }
    it flip with the theme. Numeric axes stick with the static slate-400. */
 :root      { --chart-axis-label: #475569; } /* slate-600 — readable on white */
 html.dark  { --chart-axis-label: #cbd5e1; } /* slate-300 — readable on dark  */
+
+/* Suppress the browser default focus outline on Recharts chart SVGs. Charts on
+   the dashboard are click-targets (open the matching conversations view); when
+   middle-clicked the SVG receives focus and renders a stark white box around
+   the plot area. The focus is mouse-driven so removing the outline doesn't
+   affect keyboard a11y for any other surface. */
+.recharts-wrapper:focus,
+.recharts-wrapper *:focus,
+.recharts-surface:focus { outline: none; }
+
+/* Slim scrollbar utility — Firefox uses scrollbar-width/color, Chromium uses
+   ::-webkit-scrollbar pseudos. Theme-aware via the html.dark class. */
+.scrollbar-slim { scrollbar-width: thin; scrollbar-color: #94a3b8 transparent; }
+html.dark .scrollbar-slim { scrollbar-color: #475569 transparent; }
+.scrollbar-slim::-webkit-scrollbar { width: 8px; height: 8px; }
+.scrollbar-slim::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-slim::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 4px; }
+.scrollbar-slim::-webkit-scrollbar-thumb:hover { background: #64748b; }
+html.dark .scrollbar-slim::-webkit-scrollbar-thumb { background: #475569; }
+html.dark .scrollbar-slim::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+/* Pulsing "live" dot for the latest point on the Dissatisfaction Trend chart.
+   Uses SVG `r` animation, supported in Chrome/Firefox/Safari 16+. */
+@keyframes trend-pulse {
+  0%   { r: 4;  opacity: 0.55; }
+  100% { r: 14; opacity: 0;    }
+}
+.trend-pulse-ring {
+  animation: trend-pulse 1.8s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}

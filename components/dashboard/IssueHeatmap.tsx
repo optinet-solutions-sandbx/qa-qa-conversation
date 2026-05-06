@@ -19,6 +19,12 @@ interface HeatmapProps {
   cellHeight?: string;
   /** Optional click handler — receives the raw row/col keys. */
   onCellClick?: (rowKey: string, colKey: string, value: number, e: React.MouseEvent) => void;
+  /** When true, the rightmost column header is rendered in an accent colour so
+      "today / latest" reads at a glance. Used by the Weekly Heat Map. */
+  highlightLastCol?: boolean;
+  /** When true, renders a Low → High gradient strip below the grid, anchored
+      with 0 and the dataset max so users can map shades to actual counts. */
+  showLegend?: boolean;
 }
 
 // Two palettes — both run from a deep cool baseline up to a hot/saturated end,
@@ -38,6 +44,17 @@ function pickShade(t: number, shades: string[]): string {
   return shades[idx];
 }
 
+// Pick legible text colour for a hex shade. Cyan/yellow/orange/pink shades at
+// the hot end of the palettes are too light for white text; black reads better.
+function fgForShade(hex: string): string {
+  if (!hex.startsWith('#') || hex.length !== 7) return '#ffffff';
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+  const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+  return luminance > 0.6 ? '#0b0f17' : '#ffffff';
+}
+
 export default function IssueHeatmap({
   rows,
   cols,
@@ -47,6 +64,8 @@ export default function IssueHeatmap({
   rowLabelWidth = '160px',
   cellHeight = '28px',
   onCellClick,
+  highlightLastCol = false,
+  showLegend = false,
 }: HeatmapProps) {
   const shades = PALETTES[palette];
   let max = 1;
@@ -64,14 +83,23 @@ export default function IssueHeatmap({
         style={{ gridTemplateColumns: `${rowLabelWidth} repeat(${cols.length}, minmax(22px, 1fr))` }}
       >
         <div />
-        {cols.map((c) => (
-          <div key={c.key} className="font-medium text-slate-400 text-center pb-1 truncate">{c.label}</div>
-        ))}
+        {cols.map((c, i) => {
+          const isLast = highlightLastCol && i === cols.length - 1;
+          return (
+            <div
+              key={c.key}
+              className={`font-medium text-center pb-1 truncate ${isLast ? 'text-cyan-400 font-semibold' : 'text-slate-400'}`}
+              style={isLast ? { textShadow: '0 0 8px rgba(34, 211, 238, 0.6)' } : undefined}
+            >
+              {c.label}
+            </div>
+          );
+        })}
         {rows.map((r) => (
           <Fragment key={r.key}>
             <div
-              className="font-medium text-slate-600 truncate pr-2 flex items-center"
-              style={{ height: cellHeight }}
+              className="font-medium text-slate-600 pr-2 flex items-center leading-tight"
+              style={{ minHeight: cellHeight }}
               title={r.label}
             >
               {r.label}
@@ -80,10 +108,10 @@ export default function IssueHeatmap({
               const v = getValue(r.key, c.key);
               const t = v / max;
               const bg = pickShade(t, shades);
-              // White on any populated cell — the palettes start at a deep-cool
-              // shade so white reads cleanly against every step. Empty cells
-              // don't render text so their fg colour doesn't matter.
-              const fg = '#ffffff';
+              // Pick text colour by cell luminance — the cyan palette runs into
+              // bright yellow/orange/pink at the hot end where white text would
+              // wash out. Empty cells don't render text so their fg is unused.
+              const fg = fgForShade(bg);
               // Glow halo on hover — `--cell-color` is set inline so the box-shadow
               // picks up each cell's own gradient shade (cells share the same
               // hover class but glow in their own colour). Skipped for v=0 cells
@@ -92,7 +120,7 @@ export default function IssueHeatmap({
               return (
                 <div
                   key={c.key}
-                  className={`rounded-sm flex items-center justify-center transition-shadow duration-150 ${onCellClick ? 'cursor-pointer' : ''} ${glowable ? 'hover:shadow-[0_0_14px_var(--cell-color),0_0_4px_var(--cell-color)]' : ''}`}
+                  className={`rounded-sm flex items-center justify-center transition-shadow duration-150 ${onCellClick ? 'cursor-pointer' : ''} ${glowable ? 'shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07)] hover:shadow-[inset_0_0_0_1px_rgba(255,255,255,0.14),0_0_14px_var(--cell-color),0_0_4px_var(--cell-color)]' : ''}`}
                   style={{ background: bg, height: cellHeight, color: fg, ['--cell-color' as string]: bg } as React.CSSProperties}
                   onClick={onCellClick ? (e) => onCellClick(r.key, c.key, v, e) : undefined}
                   onMouseDown={onCellClick ? (e) => { if (e.button === 1) { e.preventDefault(); onCellClick(r.key, c.key, v, e); } } : undefined}
@@ -105,6 +133,19 @@ export default function IssueHeatmap({
           </Fragment>
         ))}
       </div>
+      {showLegend && (
+        <div
+          className="mt-3 flex items-center gap-2 text-[10px] text-slate-400"
+          style={{ paddingLeft: rowLabelWidth }}
+        >
+          <span>0</span>
+          <div
+            className="flex-1 h-1.5 rounded-full"
+            style={{ background: `linear-gradient(to right, ${shades.join(', ')})` }}
+          />
+          <span className="text-slate-300">{max}</span>
+        </div>
+      )}
     </div>
   );
 }

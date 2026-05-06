@@ -5,7 +5,7 @@ import ConversationsOverlay from '@/components/dashboard/ConversationsOverlay';
 import IssueHeatmap from '@/components/dashboard/IssueHeatmap';
 import { AM_NAMES, SEGMENTS, VIP_LEVELS } from '@/lib/utils';
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, LineChart, Line, Legend, AreaChart, Area, Sector,
 } from 'recharts';
 
@@ -889,7 +889,6 @@ export default function DashboardPage() {
                         <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
                       </filter>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                     <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                     <YAxis type="category" dataKey="label" width={160} tick={{ fontSize: 11, fill: 'var(--chart-axis-label)' }} />
                     <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
@@ -928,7 +927,6 @@ export default function DashboardPage() {
                         <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
                       </filter>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis
                       dataKey="issue"
                       interval={0}
@@ -966,23 +964,45 @@ export default function DashboardPage() {
                           </linearGradient>
                         );
                       })}
+                      <filter id="trendDotGlow" x="-100%" y="-100%" width="300%" height="300%">
+                        <feGaussianBlur stdDeviation="2" result="blur" />
+                        <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                      </filter>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 9, fill: '#94a3b8' }} interval={0} angle={-45} textAnchor="end" height={50} />
                     <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} />
-                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ stroke: '#22d3ee', strokeWidth: 1, strokeDasharray: '3 3', opacity: 0.55 }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} iconType="circle" iconSize={8} />
-                    {data.dissatisfactionTrend.issues.map((issue, i) => (
-                      <Area
-                        key={issue}
-                        type="monotone"
-                        dataKey={issue}
-                        stroke={COLORS[i % COLORS.length]}
-                        strokeWidth={2}
-                        fill={`url(#trendGrad-${i})`}
-                        name={issue}
-                      />
-                    ))}
+                    {data.dissatisfactionTrend.issues.map((issue, i) => {
+                      const c = COLORS[i % COLORS.length];
+                      const lastIdx = data.dissatisfactionTrend.data.length - 1;
+                      return (
+                        <Area
+                          key={issue}
+                          type="monotone"
+                          dataKey={issue}
+                          stroke={c}
+                          strokeWidth={2}
+                          fill={`url(#trendGrad-${i})`}
+                          name={issue}
+                          activeDot={{ r: 5, fill: c, stroke: '#0b0f17', strokeWidth: 1.5, filter: 'url(#trendDotGlow)' }}
+                          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                          dot={(props: any) => {
+                            const { cx, cy, index } = props;
+                            if (index !== lastIdx || cx == null || cy == null) {
+                              // Recharts requires an SVG element; render an invisible placeholder.
+                              return <circle key={`d-${i}-${index}`} cx={0} cy={0} r={0} fill="none" />;
+                            }
+                            return (
+                              <g key={`d-${i}-${index}`} filter="url(#trendDotGlow)">
+                                <circle className="trend-pulse-ring" cx={cx} cy={cy} r={4} fill={c} />
+                                <circle cx={cx} cy={cy} r={3} fill={c} stroke="#0b0f17" strokeWidth={1.5} />
+                              </g>
+                            );
+                          }}
+                        />
+                      );
+                    })}
                   </AreaChart>
                 </ResponsiveContainer>
               )}
@@ -1005,7 +1025,10 @@ export default function DashboardPage() {
                   }}
                   palette="cyan"
                   cellHeight="32px"
-                  rowLabelWidth="160px"
+                  rowLabelWidth="190px"
+                  showCounts
+                  highlightLastCol
+                  showLegend
                   onCellClick={(rowKey, colKey, _v, e) => navToConversations({ issue_item: rowKey, dateFrom: colKey, dateTo: colKey }, e)}
                 />
               )}
@@ -1060,19 +1083,35 @@ export default function DashboardPage() {
                         <stop offset="0%"   stopColor="#22d3ee" />
                         <stop offset="100%" stopColor="#f472b6" />
                       </linearGradient>
+                      <filter id="convoDotGlow" x="-100%" y="-100%" width="300%" height="300%">
+                        <feGaussianBlur stdDeviation="2" result="blur" />
+                        <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+                      </filter>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fontSize: 10, fill: '#94a3b8' }} interval={0} angle={-45} textAnchor="end" />
                     <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
-                    <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ stroke: '#22d3ee', strokeWidth: 1, strokeDasharray: '3 3', opacity: 0.55 }} />
                     <Line
                       type="monotone"
                       dataKey="count"
                       stroke="url(#convoLine)"
                       strokeWidth={3}
-                      dot={false}
                       name="Conversations"
-                      activeDot={{ r: 6, cursor: 'pointer', fill: '#22d3ee' }}
+                      activeDot={{ r: 6, cursor: 'pointer', fill: '#22d3ee', filter: 'url(#convoDotGlow)' }}
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      dot={(props: any) => {
+                        const { cx, cy, index } = props;
+                        const lastIdx = data.conversationsByDate.length - 1;
+                        if (index !== lastIdx || cx == null || cy == null) {
+                          return <circle key={`cd-${index}`} cx={0} cy={0} r={0} fill="none" />;
+                        }
+                        return (
+                          <g key={`cd-${index}`} filter="url(#convoDotGlow)">
+                            <circle className="trend-pulse-ring" cx={cx} cy={cy} r={4} fill="#f472b6" />
+                            <circle cx={cx} cy={cy} r={3} fill="#f472b6" stroke="#0b0f17" strokeWidth={1.5} />
+                          </g>
+                        );
+                      }}
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -1171,7 +1210,6 @@ export default function DashboardPage() {
                         <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
                       </filter>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                     <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
                     <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
@@ -1238,7 +1276,6 @@ export default function DashboardPage() {
                         <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
                       </filter>
                     </defs>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="label" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                     <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} />
                     <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
@@ -1261,22 +1298,37 @@ export default function DashboardPage() {
               {data.brandBreakdown.length === 0 ? (
                 <Empty message="No brand data available" />
               ) : (
-                <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-2">
                   {data.brandBreakdown.map((b, i) => {
                     const pct = data.overview.analyzed > 0 ? Math.round((b.count / data.overview.analyzed) * 100) : 0;
+                    const isTop3 = i < 3;
                     return (
                       <div
                         key={i}
-                        className="cursor-pointer group"
+                        className="cursor-pointer group border-l-2 border-transparent hover:border-cyan-400 transition-colors pl-2 -ml-2"
                         onClick={(e) => navToConversations({ brand: b.label }, e)}
                         onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); navToConversations({ brand: b.label }, e); } }}
                       >
-                        <div className="flex items-center justify-between text-xs mb-1">
-                          <span className="text-slate-600 font-medium truncate max-w-[60%] group-hover:text-blue-600 transition-colors">{b.label}</span>
-                          <span className="text-slate-400">{fmt(b.count)} <span className="text-slate-300">({pct}%)</span></span>
+                        <div className="flex items-center justify-between text-xs mb-1 gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span
+                              className={`font-mono text-[10px] tabular-nums shrink-0 ${isTop3 ? 'text-cyan-400 font-semibold' : 'text-slate-400'}`}
+                              style={isTop3 ? { textShadow: '0 0 8px rgba(34, 211, 238, 0.55)' } : undefined}
+                            >
+                              {String(i + 1).padStart(2, '0')}
+                            </span>
+                            <span className="text-slate-600 font-medium truncate group-hover:text-cyan-400 transition-colors">{b.label}</span>
+                          </div>
+                          <span className="text-slate-400 shrink-0 tabular-nums">{fmt(b.count)} <span className="text-slate-300">({pct}%)</span></span>
                         </div>
                         <div className="h-1.5 bg-slate-100 rounded-full overflow-hidden">
-                          <div className="h-full bg-blue-500 rounded-full" style={{ width: `${pct}%` }} />
+                          <div
+                            className="h-full rounded-full transition-all duration-300"
+                            style={{
+                              width: `${pct}%`,
+                              background: 'linear-gradient(to right, #22d3ee, #f472b6)',
+                            }}
+                          />
                         </div>
                       </div>
                     );
@@ -1289,28 +1341,53 @@ export default function DashboardPage() {
               {data.agentBreakdown.length === 0 ? (
                 <Empty message="No agent data available" />
               ) : (
-                <div className="overflow-auto max-h-[300px]">
+                <div className="overflow-y-auto max-h-[300px] pr-2 scrollbar-slim">
                   <table className="w-full text-sm">
                     <thead className="sticky top-0 bg-white">
                       <tr className="border-b border-slate-100">
+                        <th className="text-left py-2 pl-2 pr-2 text-xs font-semibold text-slate-400 uppercase tracking-wide w-10">#</th>
                         <th className="text-left py-2 pr-4 text-xs font-semibold text-slate-400 uppercase tracking-wide">Agent</th>
-                        <th className="text-right py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Conversations</th>
+                        <th className="text-right py-2 pr-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Conversations</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {data.agentBreakdown.map((a, i) => (
-                        <tr
-                          key={i}
-                          className="hover:bg-slate-50 transition-colors cursor-pointer"
-                          onClick={(e) => navToConversations({ agent_name: a.label }, e)}
-                          onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); navToConversations({ agent_name: a.label }, e); } }}
-                        >
-                          <td className="py-2.5 pr-4 text-slate-700 text-xs font-medium">{a.label}</td>
-                          <td className="py-2.5 text-right">
-                            <span className="text-xs font-semibold text-slate-600">{fmt(a.count)}</span>
-                          </td>
-                        </tr>
-                      ))}
+                    <tbody>
+                      {data.agentBreakdown.map((a, i) => {
+                        const maxCount = data.agentBreakdown[0]?.count ?? 1;
+                        const pct = (a.count / maxCount) * 100;
+                        const isTop3 = i < 3;
+                        return (
+                          <tr
+                            key={i}
+                            className="group hover:bg-slate-50 transition-colors cursor-pointer"
+                            onClick={(e) => navToConversations({ agent_name: a.label }, e)}
+                            onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); navToConversations({ agent_name: a.label }, e); } }}
+                          >
+                            <td className="py-2.5 pl-2 pr-2 border-l-2 border-transparent group-hover:border-cyan-400 transition-colors">
+                              <span
+                                className={`font-mono text-[10px] tabular-nums ${isTop3 ? 'text-cyan-400 font-semibold' : 'text-slate-400'}`}
+                                style={isTop3 ? { textShadow: '0 0 8px rgba(34, 211, 238, 0.55)' } : undefined}
+                              >
+                                {String(i + 1).padStart(2, '0')}
+                              </span>
+                            </td>
+                            <td className="py-2.5 pr-4 text-slate-700 text-xs font-medium">{a.label}</td>
+                            <td className="py-2.5 pr-2 text-right">
+                              <div className="flex items-center gap-2 justify-end">
+                                <div className="h-1 w-[80px] bg-slate-200 rounded-full overflow-hidden">
+                                  <div
+                                    className="h-full rounded-full transition-all duration-300"
+                                    style={{
+                                      width: `${pct}%`,
+                                      background: 'linear-gradient(to right, #22d3ee, #f472b6)',
+                                    }}
+                                  />
+                                </div>
+                                <span className="text-xs font-semibold text-slate-600 tabular-nums min-w-[3ch] text-right">{fmt(a.count)}</span>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -1358,7 +1435,6 @@ export default function DashboardPage() {
                       <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
                     </filter>
                   </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
                   <XAxis type="number" tick={{ fontSize: 11, fill: '#94a3b8' }} />
                   <YAxis type="category" dataKey="label" width={240} tick={{ fontSize: 11, fill: 'var(--chart-axis-label)' }} />
                   <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
@@ -1383,30 +1459,55 @@ export default function DashboardPage() {
             {data.topItems.length === 0 ? (
               <Empty message="No analyzed data yet" />
             ) : (
-              <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
+              <div className="overflow-x-auto max-h-[600px] overflow-y-auto scrollbar-slim">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-white">
                     <tr className="border-b border-slate-200">
+                      <th className="text-left py-3 pl-3 pr-3 text-xs font-semibold text-slate-600 uppercase tracking-wide w-12">#</th>
                       <th className="text-left py-3 pr-4 text-xs font-semibold text-slate-600 uppercase tracking-wide">Issue</th>
                       <th className="text-left py-3 pr-4 text-xs font-semibold text-slate-600 uppercase tracking-wide">Category</th>
-                      <th className="text-right py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide">Count</th>
+                      <th className="text-right py-3 pr-3 text-xs font-semibold text-slate-600 uppercase tracking-wide">Count</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-100">
-                    {data.topItems.map((item, i) => (
-                      <tr
-                        key={i}
-                        className="hover:bg-slate-50 transition-colors cursor-pointer"
-                        onClick={(e) => navToConversations({ issue_item: item.label }, e)}
-                        onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); navToConversations({ issue_item: item.label }, e); } }}
-                      >
-                        <td className="py-3 pr-4 text-slate-800 text-sm font-medium">{item.label}</td>
-                        <td className="py-3 pr-4 text-slate-500 text-sm">{item.category}</td>
-                        <td className="py-3 text-right">
-                          <span className="text-sm font-semibold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full">{fmt(item.count)}</span>
-                        </td>
-                      </tr>
-                    ))}
+                  <tbody>
+                    {data.topItems.map((item, i) => {
+                      const maxCount = data.topItems[0]?.count ?? 1;
+                      const pct = (item.count / maxCount) * 100;
+                      const isTop3 = i < 3;
+                      return (
+                        <tr
+                          key={i}
+                          className="group hover:bg-slate-50 transition-colors cursor-pointer"
+                          onClick={(e) => navToConversations({ issue_item: item.label }, e)}
+                          onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); navToConversations({ issue_item: item.label }, e); } }}
+                        >
+                          <td className="py-3 pl-3 pr-3 border-l-2 border-transparent group-hover:border-cyan-400 transition-colors">
+                            <span
+                              className={`font-mono text-xs tabular-nums ${isTop3 ? 'text-cyan-400 font-semibold' : 'text-slate-400'}`}
+                              style={isTop3 ? { textShadow: '0 0 8px rgba(34, 211, 238, 0.55)' } : undefined}
+                            >
+                              {String(i + 1).padStart(2, '0')}
+                            </span>
+                          </td>
+                          <td className="py-3 pr-4 text-slate-800 text-sm font-medium">{item.label}</td>
+                          <td className="py-3 pr-4 text-slate-500 text-sm">{item.category}</td>
+                          <td className="py-3 pr-3 text-right">
+                            <div className="flex items-center gap-3 justify-end">
+                              <div className="h-1 w-[120px] bg-slate-200 rounded-full overflow-hidden">
+                                <div
+                                  className="h-full rounded-full transition-all duration-300"
+                                  style={{
+                                    width: `${pct}%`,
+                                    background: 'linear-gradient(to right, #22d3ee, #f472b6)',
+                                  }}
+                                />
+                              </div>
+                              <span className="text-sm font-semibold text-blue-600 tabular-nums min-w-[3ch] text-right">{fmt(item.count)}</span>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
