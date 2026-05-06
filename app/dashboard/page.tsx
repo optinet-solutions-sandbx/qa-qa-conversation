@@ -66,6 +66,67 @@ interface DashboardData {
   filterOptions: { brands: string[]; agents: string[]; languages: string[]; countries: string[]; categories: string[]; issues: { category: string; items: string[] }[] };
 }
 
+// Half-payloads returned by the split /api/dashboard endpoint. ScopedData covers
+// every widget that depends on the date filter; GlobalData covers the
+// last-30-days widgets, the operational pending-escalation counters, and the
+// brand/agent/country dropdown options — all of which are invariant under date
+// changes, so they live behind a separate cache key that survives date nudges.
+interface ScopedDashboardData {
+  overview: Overview;
+  escalationStats: { totalEscalations: number; resolved: number; closureRate: number };
+  resolutionBreakdown: LabelCount[];
+  severityBreakdown: LabelCount[];
+  topCategories: LabelCount[];
+  topItems: ItemCount[];
+  languageBreakdown: LabelCount[];
+  brandBreakdown: LabelCount[];
+  agentBreakdown: LabelCount[];
+  conversationsByDate: DateCount[];
+  filterOptions: { languages: string[]; categories: string[]; issues: { category: string; items: string[] }[] };
+}
+
+interface GlobalDashboardData {
+  pendingEscalations: { pendingUnder24h: number; pendingOver24h: number };
+  issueSpikes: IssueSpike[];
+  dissatisfactionTrend: DissatisfactionTrend;
+  weeklyIssueHeatmap: WeeklyIssueHeatmap;
+  dailyHourlyIssueHeatmap: DailyHourlyIssueHeatmap;
+  filterOptions: { brands: string[]; agents: string[]; countries: string[] };
+}
+
+function mergeDashboard(s: ScopedDashboardData, g: GlobalDashboardData): DashboardData {
+  return {
+    overview: s.overview,
+    escalationStats: {
+      totalEscalations: s.escalationStats.totalEscalations,
+      resolved:         s.escalationStats.resolved,
+      closureRate:      s.escalationStats.closureRate,
+      pendingUnder24h:  g.pendingEscalations.pendingUnder24h,
+      pendingOver24h:   g.pendingEscalations.pendingOver24h,
+    },
+    issueSpikes:             g.issueSpikes,
+    dissatisfactionTrend:    g.dissatisfactionTrend,
+    weeklyIssueHeatmap:      g.weeklyIssueHeatmap,
+    dailyHourlyIssueHeatmap: g.dailyHourlyIssueHeatmap,
+    resolutionBreakdown:     s.resolutionBreakdown,
+    severityBreakdown:       s.severityBreakdown,
+    topCategories:           s.topCategories,
+    topItems:                s.topItems,
+    languageBreakdown:       s.languageBreakdown,
+    brandBreakdown:          s.brandBreakdown,
+    agentBreakdown:          s.agentBreakdown,
+    conversationsByDate:     s.conversationsByDate,
+    filterOptions: {
+      brands:     g.filterOptions.brands,
+      agents:     g.filterOptions.agents,
+      countries:  g.filterOptions.countries,
+      languages:  s.filterOptions.languages,
+      categories: s.filterOptions.categories,
+      issues:     s.filterOptions.issues,
+    },
+  };
+}
+
 // ── Cache helpers ──────────────────────────────────────────────────────────
 
 const CACHE_TTL = 5 * 60 * 1000; // 5 minutes — beyond this, refetch in background
@@ -85,12 +146,14 @@ function flooredDate(d: string): string {
 
 // localStorage (not sessionStorage) so the cache survives full page reloads and
 // new tabs — the dashboard then opens instantly with the last-known payload
-// while a fresh fetch runs in the background.
-function getCached(key: string): { data: DashboardData; isStale: boolean } | null {
+// while a fresh fetch runs in the background. Two namespaces — "scoped" and
+// "global" — let the date-independent half stay cached across date-only filter
+// changes so re-renders feel instant.
+function getCachedScoped(key: string): { data: ScopedDashboardData; isStale: boolean } | null {
   try {
-    const raw = localStorage.getItem(`dashboard:${key}`);
+    const raw = localStorage.getItem(`dashboard:scoped:${key}`);
     if (!raw) return null;
-    const { data, fetchedAt } = JSON.parse(raw) as { data: DashboardData; fetchedAt: number };
+    const { data, fetchedAt } = JSON.parse(raw) as { data: ScopedDashboardData; fetchedAt: number };
     // Skip empty cached payloads — these almost always come from the first
     // visit early in the day before ingest has caught up, and serving them
     // makes the dashboard look broken (all zeros) until the bg refetch lands.
@@ -101,12 +164,27 @@ function getCached(key: string): { data: DashboardData; isStale: boolean } | nul
   }
 }
 
-function setCached(key: string, data: DashboardData) {
+function setCachedScoped(key: string, data: ScopedDashboardData) {
   try {
-    localStorage.setItem(`dashboard:${key}`, JSON.stringify({ data, fetchedAt: Date.now() }));
+    localStorage.setItem(`dashboard:scoped:${key}`, JSON.stringify({ data, fetchedAt: Date.now() }));
+  } catch { /* ignore quota errors */ }
+}
+
+function getCachedGlobal(key: string): { data: GlobalDashboardData; isStale: boolean } | null {
+  try {
+    const raw = localStorage.getItem(`dashboard:global:${key}`);
+    if (!raw) return null;
+    const { data, fetchedAt } = JSON.parse(raw) as { data: GlobalDashboardData; fetchedAt: number };
+    return { data, isStale: Date.now() - fetchedAt > CACHE_TTL };
   } catch {
-    // ignore quota errors
+    return null;
   }
+}
+
+function setCachedGlobal(key: string, data: GlobalDashboardData) {
+  try {
+    localStorage.setItem(`dashboard:global:${key}`, JSON.stringify({ data, fetchedAt: Date.now() }));
+  } catch { /* ignore quota errors */ }
 }
 
 // ── Colour palette ─────────────────────────────────────────────────────────
@@ -422,10 +500,7 @@ function MultiSelectFilter({ options, groups, selected, onChange, placeholder, e
 // ── Main page ──────────────────────────────────────────────────────────────
 
 export default function DashboardPage() {
-  const [data, setData]       = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
-  const [error, setError]     = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   // Overlay state
   const [overlayFilters, setOverlayFilters] = useState<Record<string, string | string[]> | null>(null);
@@ -511,17 +586,30 @@ export default function DashboardPage() {
     }
   }, []);
 
-  const forceRef = useRef(false);
-  // Cache key of whatever data is currently rendered. Used to decide whether
-  // a stale cache hit on a *different* filter combo should overwrite the
-  // screen — it shouldn't, because the numbers can be wildly out of date and
-  // flash misleading values before the fresh fetch lands.
-  const displayedKeyRef = useRef<string | null>(null);
+  const [scopedData, setScopedData] = useState<ScopedDashboardData | null>(null);
+  const [globalData, setGlobalData] = useState<GlobalDashboardData | null>(null);
+  const [scopedRefreshing, setScopedRefreshing] = useState(false);
+  const [globalRefreshing, setGlobalRefreshing] = useState(false);
 
-  const fetchData = useCallback(async (signal?: AbortSignal) => {
+  const data: DashboardData | null = scopedData && globalData ? mergeDashboard(scopedData, globalData) : null;
+  const refreshing = scopedRefreshing || globalRefreshing;
+
+  // Cache key of whatever scoped data is currently rendered. Used to decide
+  // whether a stale cache hit on a *different* filter combo should overwrite
+  // the screen — it shouldn't, because the numbers can be wildly out of date
+  // and flash misleading values before the fresh fetch lands.
+  const displayedScopedKeyRef = useRef<string | null>(null);
+  const displayedGlobalKeyRef = useRef<string | null>(null);
+
+  // ── Scoped fetch (date-dependent) ────────────────────────────────────────
+  // Refires on every filter change — including date — and only this side
+  // refetches when the user nudges the date filter. Cache key includes every
+  // filter so each unique combination has its own SWR entry.
+  const fetchScoped = useCallback(async (signal?: AbortSignal, force = false) => {
     const params = new URLSearchParams();
-    if (dateFrom)       params.set('dateFrom',       dateFrom);
-    if (dateTo)         params.set('dateTo',         dateTo);
+    params.set('part', 'scoped');
+    if (dateFrom) params.set('dateFrom', dateFrom);
+    if (dateTo)   params.set('dateTo',   dateTo);
     brands.forEach((b)          => params.append('brand',          b));
     agents.forEach((a)          => params.append('agent',          a));
     accountManagers.forEach((m) => params.append('accountManager', m));
@@ -535,71 +623,117 @@ export default function DashboardPage() {
     resolutions.forEach((r)     => params.append('resolution',     r));
 
     const cacheKey = params.toString();
-    const force = forceRef.current;
-    forceRef.current = false;
-
-    // Stale-while-revalidate: render cached payload instantly so the dashboard
-    // opens without a heavy loading state. If the cache is fresh (< CACHE_TTL),
-    // we skip the network entirely; if stale, we silently refetch in the
-    // background and swap in the new data when it arrives.
-    const cached = force ? null : getCached(cacheKey);
+    const cached = force ? null : getCachedScoped(cacheKey);
     // Only paint stale cache when it matches the view we're already showing
-    // (true SWR refresh) or on initial mount (better than a blank screen).
-    // For filter changes, a stale cross-key hit would flash old numbers
-    // before the fresh fetch lands, so we keep the current data on screen.
-    const canPaintStale = displayedKeyRef.current === null
-      || displayedKeyRef.current === cacheKey;
+    // (true SWR refresh) or on initial mount. For filter changes, a stale
+    // cross-key hit would flash old numbers before the fresh fetch lands, so
+    // we keep the current data on screen.
+    const canPaintStale = displayedScopedKeyRef.current === null
+      || displayedScopedKeyRef.current === cacheKey;
     if (cached && (!cached.isStale || canPaintStale)) {
-      setData(cached.data);
+      setScopedData(cached.data);
       setError(null);
-      setLoading(false);
-      displayedKeyRef.current = cacheKey;
+      displayedScopedKeyRef.current = cacheKey;
       if (!cached.isStale) return;
-      // Stale cache on screen — flag the background refetch so the user sees
-      // that the displayed numbers may be out of date.
-      setRefreshing(true);
-    } else if (displayedKeyRef.current !== null) {
-      // Filter change with no usable cache: keep the previous view on screen
-      // and let the spinner indicator signal a refetch.
-      setRefreshing(true);
+      setScopedRefreshing(true);
+    } else if (displayedScopedKeyRef.current !== null) {
+      setScopedRefreshing(true);
       setError(null);
     } else {
-      setLoading(true);
       setError(null);
     }
 
     try {
       const res = await fetch(`/api/dashboard?${params}`, { signal });
       if (!res.ok) throw new Error('Failed to load dashboard');
-      const json = await res.json();
+      const json = await res.json() as ScopedDashboardData;
       if (signal?.aborted) return;
-      setCached(cacheKey, json);
-      setData(json);
+      setCachedScoped(cacheKey, json);
+      setScopedData(json);
       setError(null);
-      displayedKeyRef.current = cacheKey;
+      displayedScopedKeyRef.current = cacheKey;
     } catch (e) {
-      // A superseded request was aborted by the next filter change — leave the
-      // newer request's state alone instead of flashing an error or clearing
-      // the spinner it just set.
       if (signal?.aborted || (e as Error).name === 'AbortError') return;
-      // If we already have stale cached data on screen, keep it visible rather
-      // than blanking the dashboard with an error.
       if (!cached) setError((e as Error).message);
     } finally {
-      if (!signal?.aborted) {
-        setLoading(false);
-        setRefreshing(false);
-      }
+      if (!signal?.aborted) setScopedRefreshing(false);
     }
   }, [dateFrom, dateTo, brands, agents, accountManagers, segments, vipLevels, languages, countries, categories, issues, severities, resolutions]);
 
-  // Abort the in-flight fetch whenever filters change so a slower earlier
-  // response can't land last and clobber the newer one's data.
+  // ── Global fetch (date-independent) ──────────────────────────────────────
+  // Cache key intentionally excludes dateFrom/dateTo and resolution — none of
+  // the global widgets depend on those, so date-only nudges hit the cache and
+  // skip the network entirely.
+  const fetchGlobal = useCallback(async (signal?: AbortSignal, force = false) => {
+    const params = new URLSearchParams();
+    params.set('part', 'global');
+    brands.forEach((b)          => params.append('brand',          b));
+    agents.forEach((a)          => params.append('agent',          a));
+    accountManagers.forEach((m) => params.append('accountManager', m));
+    segments.forEach((s)        => params.append('segment',        s));
+    vipLevels.forEach((v)       => params.append('vipLevel',       v));
+    languages.forEach((l)       => params.append('language',       l));
+    countries.forEach((c)       => params.append('country',        c));
+    categories.forEach((c)      => params.append('category',       c));
+    issues.forEach((i)          => params.append('issue',          i));
+    severities.forEach((s)      => params.append('severity',       s));
+
+    const cacheKey = params.toString();
+    const cached = force ? null : getCachedGlobal(cacheKey);
+    const canPaintStale = displayedGlobalKeyRef.current === null
+      || displayedGlobalKeyRef.current === cacheKey;
+    if (cached && (!cached.isStale || canPaintStale)) {
+      setGlobalData(cached.data);
+      displayedGlobalKeyRef.current = cacheKey;
+      if (!cached.isStale) return;
+      setGlobalRefreshing(true);
+    } else if (displayedGlobalKeyRef.current !== null) {
+      setGlobalRefreshing(true);
+    }
+
+    try {
+      const res = await fetch(`/api/dashboard?${params}`, { signal });
+      if (!res.ok) throw new Error('Failed to load dashboard');
+      const json = await res.json() as GlobalDashboardData;
+      if (signal?.aborted) return;
+      setCachedGlobal(cacheKey, json);
+      setGlobalData(json);
+      displayedGlobalKeyRef.current = cacheKey;
+    } catch (e) {
+      if (signal?.aborted || (e as Error).name === 'AbortError') return;
+      if (!cached) setError((e as Error).message);
+    } finally {
+      if (!signal?.aborted) setGlobalRefreshing(false);
+    }
+  }, [brands, agents, accountManagers, segments, vipLevels, languages, countries, categories, issues, severities]);
+
+  // Two effects with distinct dependency lists — that's the whole point of the
+  // split. Changing only the date filter recreates fetchScoped (causing a
+  // refetch) but leaves fetchGlobal untouched, so the global half stays put.
   useEffect(() => {
     const controller = new AbortController();
-    fetchData(controller.signal);
+    fetchScoped(controller.signal);
     return () => controller.abort();
-  }, [fetchData]);
+  }, [fetchScoped]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchGlobal(controller.signal);
+    return () => controller.abort();
+  }, [fetchGlobal]);
+
+  // Manual refresh: bypass both caches and refetch immediately. The Refresh
+  // button is the only entry point — automatic re-runs from filter changes go
+  // through the SWR cache as usual.
+  const refreshAll = useCallback(() => {
+    fetchScoped(undefined, true);
+    fetchGlobal(undefined, true);
+  }, [fetchScoped, fetchGlobal]);
+
+  // Loading is the initial cold-start skeleton — true only when neither half
+  // has produced data yet. Once data is on screen, filter changes show the
+  // top-right "Refreshing…" indicator instead of blanking the dashboard.
+  const loading = !scopedData || !globalData;
 
   const brandOptions    = data?.filterOptions.brands     ?? [];
   const agentOptions    = data?.filterOptions.agents     ?? [];
@@ -643,7 +777,7 @@ export default function DashboardPage() {
             </div>
           )}
           <button
-            onClick={() => { forceRef.current = true; fetchData(); }}
+            onClick={refreshAll}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
           >
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">

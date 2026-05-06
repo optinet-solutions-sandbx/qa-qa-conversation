@@ -30,10 +30,20 @@ function countBy<T>(items: T[], key: (item: T) => string | null): { label: strin
 }
 
 // ── GET /api/dashboard ─────────────────────────────────────────────────────
-// Query params: dateFrom, dateTo, brand, agent, category
+// Query params: dateFrom, dateTo, brand, agent, category, ..., part
+// `part` controls which slice of the response is built:
+//   - 'scoped' → date-dependent stuff (overview, breakdowns, conversationsByDate, …)
+//   - 'global' → date-independent stuff (30-day trend/heatmaps, spikes, pending
+//                escalations, brand/agent/country dropdowns)
+//   - omitted  → both, merged into the legacy single-payload shape
+// The dashboard splits its fetch into two requests with different cache keys so
+// changing only the date filter is a global-cache hit and only refetches scoped.
 
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
+  const part           = searchParams.get('part'); // 'scoped' | 'global' | null
+  const wantScoped     = part !== 'global';
+  const wantGlobal     = part !== 'scoped';
   const dateFrom       = searchParams.get('dateFrom');
   const dateTo         = searchParams.get('dateTo');
   // All filters are multi-value — single-value clients (e.g. drill-down overlay)
@@ -85,62 +95,70 @@ export async function GET(req: NextRequest) {
       country:        countries,
     });
 
-    const widerRowsPromise = (async () => {
-      const out: Array<Record<string, unknown>> = [];
-      let idx = 0;
-      while (true) {
-        const { data: page } = await applyWiderDbFilters(
-          supabase
-            .from('conversations')
-            .select('id, summary, language, intercom_created_at, dissatisfaction_severity, player_tags, player_segments, player_companies, tags, player_custom_attributes')
-            .not('summary', 'is', null)
-            .lt('intercom_created_at', widerEndUTC.toISOString())
-            .order('intercom_created_at', { ascending: false })
-            .order('id', { ascending: false })
-            .range(idx, idx + PAGE_SIZE - 1)
-        ) as { data: Array<Record<string, unknown>> | null };
-        if (!page || page.length === 0) break;
-        out.push(...page);
-        if (page.length < PAGE_SIZE) break;
-        idx += PAGE_SIZE;
-      }
-      return out;
-    })();
+    // Only fire the heavy 30-day pagination when the global slice is requested.
+    // For scoped-only requests this is wasted work — the trend/heatmap widgets
+    // already have their data cached client-side from a prior global fetch.
+    const widerRowsPromise: Promise<Array<Record<string, unknown>>> | null = wantGlobal
+      ? (async () => {
+          const out: Array<Record<string, unknown>> = [];
+          let idx = 0;
+          while (true) {
+            const { data: page } = await applyWiderDbFilters(
+              supabase
+                .from('conversations')
+                .select('id, summary, language, intercom_created_at, dissatisfaction_severity, player_tags, player_segments, player_companies, tags, player_custom_attributes')
+                .not('summary', 'is', null)
+                .lt('intercom_created_at', widerEndUTC.toISOString())
+                .order('intercom_created_at', { ascending: false })
+                .order('id', { ascending: false })
+                .range(idx, idx + PAGE_SIZE - 1)
+            ) as { data: Array<Record<string, unknown>> | null };
+            if (!page || page.length === 0) break;
+            out.push(...page);
+            if (page.length < PAGE_SIZE) break;
+            idx += PAGE_SIZE;
+          }
+          return out;
+        })()
+      : null;
 
     // ── Overview counts ──────────────────────────────────────────────────
-    const [totalRes, analyzedRes, alertRes] = await Promise.all([
-      applyFilters(supabase.from('conversations').select('*', { count: 'exact', head: true })),
-      applyFilters(supabase.from('conversations').select('*', { count: 'exact', head: true }).not('summary', 'is', null)),
-      applyFilters(supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('is_alert_worthy', true)),
-    ]);
-
-    const total      = totalRes.count    ?? 0;
-    const analyzed   = analyzedRes.count ?? 0;
-    const alertWorthy = alertRes.count   ?? 0;
+    let total = 0, analyzed = 0, alertWorthy = 0;
+    if (wantScoped) {
+      const [totalRes, analyzedRes, alertRes] = await Promise.all([
+        applyFilters(supabase.from('conversations').select('*', { count: 'exact', head: true })),
+        applyFilters(supabase.from('conversations').select('*', { count: 'exact', head: true }).not('summary', 'is', null)),
+        applyFilters(supabase.from('conversations').select('*', { count: 'exact', head: true }).eq('is_alert_worthy', true)),
+      ]);
+      total       = totalRes.count    ?? 0;
+      analyzed    = analyzedRes.count ?? 0;
+      alertWorthy = alertRes.count    ?? 0;
+    }
 
     // ── Analyzed conversations (paginated to bypass 1000-row default limit) ──
     const allAnalyzedRows: Array<Record<string, unknown>> = [];
-    let from = 0;
+    if (wantScoped) {
+      let from = 0;
+      while (true) {
+        // Same explicit order the drill-down uses — without ORDER BY, Postgres
+        // offset pagination across separate HTTP requests can skip or duplicate
+        // rows, which was a plausible source of past dashboard/drill-down count
+        // drift.
+        const { data: page } = await applyFilters(
+          supabase
+            .from('conversations')
+            .select('id, summary, brand, agent_name, is_alert_worthy, intercom_created_at, language, resolution_status, dissatisfaction_severity, player_tags, player_segments, player_companies, tags, player_custom_attributes, analyzed_at, asana_task_gid, asana_completed_at, asana_task_deleted_at')
+            .not('summary', 'is', null)
+            .order('intercom_created_at', { ascending: false })
+            .order('id', { ascending: false })
+            .range(from, from + PAGE_SIZE - 1)
+        ) as { data: Array<Record<string, unknown>> | null };
 
-    while (true) {
-      // Same explicit order the drill-down uses — without ORDER BY, Postgres
-      // offset pagination across separate HTTP requests can skip or duplicate
-      // rows, which was a plausible source of past dashboard/drill-down count
-      // drift.
-      const { data: page } = await applyFilters(
-        supabase
-          .from('conversations')
-          .select('id, summary, brand, agent_name, is_alert_worthy, intercom_created_at, language, resolution_status, dissatisfaction_severity, player_tags, player_segments, player_companies, tags, player_custom_attributes, analyzed_at, asana_task_gid, asana_completed_at, asana_task_deleted_at')
-          .not('summary', 'is', null)
-          .order('intercom_created_at', { ascending: false })
-          .order('id', { ascending: false })
-          .range(from, from + PAGE_SIZE - 1)
-      ) as { data: Array<Record<string, unknown>> | null };
-
-      if (!page || page.length === 0) break;
-      allAnalyzedRows.push(...page);
-      if (page.length < PAGE_SIZE) break;
-      from += PAGE_SIZE;
+        if (!page || page.length === 0) break;
+        allAnalyzedRows.push(...page);
+        if (page.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
     }
 
     // Defensive dedup: even with a stable ORDER BY, any future change that
@@ -447,22 +465,25 @@ export async function GET(req: NextRequest) {
     // A "live" escalation is a conversation with an Asana task that hasn't been
     // deleted in Asana — same row set used by dbGetAsanaReportingMetrics so the
     // dashboard cards line up with the Report Page totals.
-    // - Total/Resolved respect the global filters (date/brand/agent/AM).
-    // - Pending <24h / >24h are operational counters that ignore ALL filters:
-    //   they show every currently-open Asana ticket regardless of view, since
-    //   that's the SLA pressure the user needs to see at a glance.
-    const NOW_MS = Date.now();
-    const DAY_MS = 24 * 60 * 60 * 1000;
-    const escalatedRows = filteredRows.filter(
-      (r) => r.asana_task_gid != null && r.asana_task_deleted_at == null,
-    );
+    // - Total/Resolved respect the global filters (date/brand/agent/AM) → scoped slice.
+    // - Pending <24h / >24h are operational counters that ignore ALL filters → global slice.
+    const escalatedRows = wantScoped
+      ? filteredRows.filter((r) => r.asana_task_gid != null && r.asana_task_deleted_at == null)
+      : [];
     const totalEscalations = escalatedRows.length;
     const resolvedEscalations = escalatedRows.filter((r) => r.asana_completed_at != null).length;
+    const closureRate = totalEscalations > 0
+      ? Math.round((resolvedEscalations / totalEscalations) * 100)
+      : 0;
 
     // Unfiltered open-pending query — small payload, just enough to bucket by age.
+    // Lives on the global slice since it ignores every dashboard filter and only
+    // changes as Asana tasks are opened/closed.
     let pendingUnder24h = 0;
     let pendingOver24h = 0;
-    {
+    if (wantGlobal) {
+      const NOW_MS = Date.now();
+      const DAY_MS = 24 * 60 * 60 * 1000;
       let pIdx = 0;
       while (true) {
         const { data: page } = await supabase
@@ -484,17 +505,6 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const closureRate = totalEscalations > 0
-      ? Math.round((resolvedEscalations / totalEscalations) * 100)
-      : 0;
-    const escalationStats = {
-      totalEscalations,
-      resolved: resolvedEscalations,
-      pendingUnder24h,
-      pendingOver24h,
-      closureRate,
-    };
-
     // ── Top 5 Issue Spikes — fixed window, ignores all filters ───────────
     // Compares the two most recent COMPLETED UTC days (so today's partial day
     // is excluded). The bars in the UI are labelled "Today" (= the more recent
@@ -502,14 +512,16 @@ export async function GET(req: NextRequest) {
     // widget is permanently fixed and never honours dateFrom/dateTo or any of
     // the brand/agent/segment/severity/category/issue filters — it's an
     // operational early-warning view of the last 24h vs the previous 24h.
-    const utcStartOfToday = new Date();
-    utcStartOfToday.setUTCHours(0, 0, 0, 0);
-    const dayNStartUTC = new Date(utcStartOfToday); dayNStartUTC.setUTCDate(dayNStartUTC.getUTCDate() - 1);
-    const dayNm1StartUTC = new Date(utcStartOfToday); dayNm1StartUTC.setUTCDate(dayNm1StartUTC.getUTCDate() - 2);
-    const dayNStrISO = dayNStartUTC.toISOString().slice(0, 10);
+    type IssueSpikeOut = { issue: string; today: number; yesterday: number };
+    let issueSpikes: IssueSpikeOut[] = [];
+    if (wantGlobal) {
+      const utcStartOfToday = new Date();
+      utcStartOfToday.setUTCHours(0, 0, 0, 0);
+      const dayNStartUTC = new Date(utcStartOfToday); dayNStartUTC.setUTCDate(dayNStartUTC.getUTCDate() - 1);
+      const dayNm1StartUTC = new Date(utcStartOfToday); dayNm1StartUTC.setUTCDate(dayNm1StartUTC.getUTCDate() - 2);
+      const dayNStrISO = dayNStartUTC.toISOString().slice(0, 10);
 
-    const spikeRows: Array<{ summary: string | null; intercom_created_at: string }> = [];
-    {
+      const spikeRows: Array<{ summary: string | null; intercom_created_at: string }> = [];
       let spikeFrom = 0;
       while (true) {
         const { data: page } = await supabase
@@ -527,43 +539,43 @@ export async function GET(req: NextRequest) {
         if (page.length < PAGE_SIZE) break;
         spikeFrom += PAGE_SIZE;
       }
-    }
 
-    type SpikeAgg = { label: string; today: number; yesterday: number; labelCounts: Record<string, number> };
-    const spikeAgg: Record<string, SpikeAgg> = {};
-    for (const r of spikeRows) {
-      const isDayN = r.intercom_created_at.slice(0, 10) === dayNStrISO;
-      const summary = parseAnalysisSummary(r.summary);
-      // Dedup per row: a single conversation flagging the same issue twice
-      // shouldn't double-count — matches how topItems is computed.
-      const seenKeys = new Set<string>();
-      for (const it of summary.results) {
-        const clean = stripItemNum(it.item ?? '');
-        if (!clean) continue;
-        const key = normalizeIssueKey(clean);
-        if (seenKeys.has(key)) continue;
-        seenKeys.add(key);
-        if (!spikeAgg[key]) spikeAgg[key] = { label: clean, today: 0, yesterday: 0, labelCounts: {} };
-        if (isDayN) spikeAgg[key].today += 1;
-        else        spikeAgg[key].yesterday += 1;
-        spikeAgg[key].labelCounts[clean] = (spikeAgg[key].labelCounts[clean] ?? 0) + 1;
+      type SpikeAgg = { label: string; today: number; yesterday: number; labelCounts: Record<string, number> };
+      const spikeAgg: Record<string, SpikeAgg> = {};
+      for (const r of spikeRows) {
+        const isDayN = r.intercom_created_at.slice(0, 10) === dayNStrISO;
+        const summary = parseAnalysisSummary(r.summary);
+        // Dedup per row: a single conversation flagging the same issue twice
+        // shouldn't double-count — matches how topItems is computed.
+        const seenKeys = new Set<string>();
+        for (const it of summary.results) {
+          const clean = stripItemNum(it.item ?? '');
+          if (!clean) continue;
+          const key = normalizeIssueKey(clean);
+          if (seenKeys.has(key)) continue;
+          seenKeys.add(key);
+          if (!spikeAgg[key]) spikeAgg[key] = { label: clean, today: 0, yesterday: 0, labelCounts: {} };
+          if (isDayN) spikeAgg[key].today += 1;
+          else        spikeAgg[key].yesterday += 1;
+          spikeAgg[key].labelCounts[clean] = (spikeAgg[key].labelCounts[clean] ?? 0) + 1;
+        }
       }
+      issueSpikes = Object.values(spikeAgg)
+        // Surface the issues with the biggest movement first — abs(delta) catches
+        // both spikes (today >> yesterday) and drops (yesterday >> today). Ties
+        // are broken by today's count so a busy issue beats a quiet one.
+        .sort((a, b) => {
+          const aDelta = Math.abs(a.today - a.yesterday);
+          const bDelta = Math.abs(b.today - b.yesterday);
+          if (aDelta !== bDelta) return bDelta - aDelta;
+          return b.today - a.today;
+        })
+        .slice(0, 5)
+        .map(({ today, yesterday, labelCounts }) => {
+          const [bestLabel] = Object.entries(labelCounts).sort((a, b) => b[1] - a[1])[0];
+          return { issue: bestLabel, today, yesterday };
+        });
     }
-    const issueSpikes = Object.values(spikeAgg)
-      // Surface the issues with the biggest movement first — abs(delta) catches
-      // both spikes (today >> yesterday) and drops (yesterday >> today). Ties
-      // are broken by today's count so a busy issue beats a quiet one.
-      .sort((a, b) => {
-        const aDelta = Math.abs(a.today - a.yesterday);
-        const bDelta = Math.abs(b.today - b.yesterday);
-        if (aDelta !== bDelta) return bDelta - aDelta;
-        return b.today - a.today;
-      })
-      .slice(0, 5)
-      .map(({ today, yesterday, labelCounts }) => {
-        const [bestLabel] = Object.entries(labelCounts).sort((a, b) => b[1] - a[1])[0];
-        return { issue: bestLabel, today, yesterday };
-      });
 
     // ── Wider 30-day load: powers Weekly + Daily/Hourly Heat Maps and Trend ──
     // These widgets have time semantics independent of the global dateFrom/dateTo
@@ -571,25 +583,42 @@ export async function GET(req: NextRequest) {
     // their own load. The actual fetch was kicked off at the top of the handler
     // so it overlaps with the main fetch + processing — here we just await the
     // resulting rows and dedupe by id (defensive, mirrors the main pipeline).
-    const widerDbRows = await widerRowsPromise;
-    const seenWiderIds = new Set<string>();
-    const widerRows = widerDbRows.filter((r) => {
-      const id = r.id as string | undefined;
-      if (!id || seenWiderIds.has(id)) return false;
-      seenWiderIds.add(id);
-      return true;
-    });
-
-    type WiderParsed = {
-      iso: string;
-      severity: string | null;
-      language: string | null;
-      vip_level: number | null;
-      segment: 'VIP' | 'NON-VIP' | 'SoftSwiss' | null;
-      categories: string[];
-      items: { category: string; item: string }[];
+    type DissatisfactionTrendOut = {
+      issues: string[];
+      data: Array<Record<string, string | number>>;
     };
-    const widerParsed: WiderParsed[] = widerRows.map((r) => {
+    type WeeklyIssueHeatmapOut = {
+      days: { date: string; label: string }[];
+      issues: { issue: string; counts: number[] }[];
+    };
+    type DailyHourlyIssueHeatmapOut = {
+      dates: string[];
+      cells: { date: string; hour: number; count: number }[];
+    };
+    let dissatisfactionTrend: DissatisfactionTrendOut = { issues: [], data: [] };
+    let weeklyIssueHeatmap: WeeklyIssueHeatmapOut = { days: [], issues: [] };
+    let dailyHourlyIssueHeatmap: DailyHourlyIssueHeatmapOut = { dates: [], cells: [] };
+
+    if (wantGlobal && widerRowsPromise) {
+      const widerDbRows = await widerRowsPromise;
+      const seenWiderIds = new Set<string>();
+      const widerRows = widerDbRows.filter((r) => {
+        const id = r.id as string | undefined;
+        if (!id || seenWiderIds.has(id)) return false;
+        seenWiderIds.add(id);
+        return true;
+      });
+
+      type WiderParsed = {
+        iso: string;
+        severity: string | null;
+        language: string | null;
+        vip_level: number | null;
+        segment: 'VIP' | 'NON-VIP' | 'SoftSwiss' | null;
+        categories: string[];
+        items: { category: string; item: string }[];
+      };
+      const widerParsed: WiderParsed[] = widerRows.map((r) => {
       const summary = parseAnalysisSummary(r.summary as string | null);
       const playerAttrs = {
         player_tags:              (r.player_tags as string[] | null) ?? [],
@@ -695,7 +724,7 @@ export async function GET(req: NextRequest) {
     const firstNonZero = trendDataAllDays.findIndex((row) =>
       trendTopIssues.some((t) => (row[t.issue] as number) > 0),
     );
-    const dissatisfactionTrend = {
+    dissatisfactionTrend = {
       issues: trendTopIssues.map((t) => t.issue),
       data: firstNonZero <= 0 ? trendDataAllDays : trendDataAllDays.slice(firstNonZero),
     };
@@ -732,7 +761,7 @@ export async function GET(req: NextRequest) {
         };
       });
     const dayOfWeekLabels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const weeklyIssueHeatmap = {
+    weeklyIssueHeatmap = {
       days: days7.map((d) => ({
         date: d,
         label: dayOfWeekLabels[new Date(d + 'T00:00:00Z').getUTCDay()],
@@ -787,12 +816,13 @@ export async function GET(req: NextRequest) {
     // empty rows above the data make the grid look broken.
     const datesWithData = new Set(allDailyHourlyCells.map((c) => c.date));
     const firstDailyIdx = days30.findIndex((d) => datesWithData.has(d));
-    const dailyHourlyIssueHeatmap = {
+    dailyHourlyIssueHeatmap = {
       dates: firstDailyIdx <= 0 ? days30 : days30.slice(firstDailyIdx),
       cells: allDailyHourlyCells,
     };
+    } // end if (wantGlobal && widerRowsPromise)
 
-    // ── Conversations by date ────────────────────────────────────────────────
+    // ── Conversations by date (scoped) ───────────────────────────────────────
     // When a category filter is active we can't use the DB RPC (it has no category
     // param), so we group the already-filtered in-memory rows by CEST date instead.
     // The RPC fast-path only takes a single brand/agent — when the user picks
@@ -801,43 +831,43 @@ export async function GET(req: NextRequest) {
     // The conversations-by-date RPC accepts only single brand/agent and has no
     // country param, so any of these conditions force the in-memory fallback.
     const dbFiltersAreMulti = brands.length > 1 || agents.length > 1 || accountManagers.length > 1 || countries.length > 0;
-    let conversationsByDate: { date: string; count: number }[];
-    if (hasCategoryFilter || hasIssueFilter || hasSeverityFilter || hasLanguageFilter || hasSegmentFilter || hasVipLevelFilter || dbFiltersAreMulti) {
-      const dateCounts: Record<string, number> = {};
-      for (const r of filteredRows) {
-        const iso = r.intercom_created_at as string | null;
-        if (!iso) continue;
-        const utcDate = new Date(iso).toISOString().slice(0, 10);
-        dateCounts[utcDate] = (dateCounts[utcDate] ?? 0) + 1;
+    let conversationsByDate: { date: string; count: number }[] = [];
+    if (wantScoped) {
+      if (hasCategoryFilter || hasIssueFilter || hasSeverityFilter || hasLanguageFilter || hasSegmentFilter || hasVipLevelFilter || dbFiltersAreMulti) {
+        const dateCounts: Record<string, number> = {};
+        for (const r of filteredRows) {
+          const iso = r.intercom_created_at as string | null;
+          if (!iso) continue;
+          const utcDate = new Date(iso).toISOString().slice(0, 10);
+          dateCounts[utcDate] = (dateCounts[utcDate] ?? 0) + 1;
+        }
+        conversationsByDate = Object.entries(dateCounts)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([date, count]) => ({ date, count }));
+      } else {
+        // Bare ISO-day bounds for the RPC — it accepts nullable ISO timestamps and
+        // interprets them as inclusive UTC day starts/ends, matching the semantics
+        // applyConversationDbFilters uses for the gte/lt pair.
+        const rpcFromISO = dateFrom ? new Date(dateFrom).toISOString() : null;
+        const rpcToISO   = dateTo   ? (() => {
+          const end = new Date(dateTo);
+          end.setUTCDate(end.getUTCDate() + 1);
+          end.setUTCMilliseconds(-1);
+          return end.toISOString();
+        })() : null;
+        const { data: dateAgg } = await supabase.rpc('get_conversations_by_cest_date', {
+          p_date_from: rpcFromISO,
+          p_date_to:   rpcToISO,
+          p_brand:     brands[0] ?? null,
+          p_agent:     agents[0] ?? null,
+        }) as { data: Array<{ cest_date: string; conversation_count: number }> | null };
+        conversationsByDate = (dateAgg ?? []).map((r) => ({
+          date:  r.cest_date,
+          count: r.conversation_count,
+        }));
       }
-      conversationsByDate = Object.entries(dateCounts)
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([date, count]) => ({ date, count }));
-    } else {
-      // Bare ISO-day bounds for the RPC — it accepts nullable ISO timestamps and
-      // interprets them as inclusive UTC day starts/ends, matching the semantics
-      // applyConversationDbFilters uses for the gte/lt pair.
-      const rpcFromISO = dateFrom ? new Date(dateFrom).toISOString() : null;
-      const rpcToISO   = dateTo   ? (() => {
-        const end = new Date(dateTo);
-        end.setUTCDate(end.getUTCDate() + 1);
-        end.setUTCMilliseconds(-1);
-        return end.toISOString();
-      })() : null;
-      const { data: dateAgg } = await supabase.rpc('get_conversations_by_cest_date', {
-        p_date_from: rpcFromISO,
-        p_date_to:   rpcToISO,
-        p_brand:     brands[0] ?? null,
-        p_agent:     agents[0] ?? null,
-      }) as { data: Array<{ cest_date: string; conversation_count: number }> | null };
-      conversationsByDate = (dateAgg ?? []).map((r) => ({
-        date:  r.cest_date,
-        count: r.conversation_count,
-      }));
-    }
 
-    // Limit to last 30 days when no dateFrom filter, and fill gaps with 0 through today (UTC)
-    {
+      // Limit to last 30 days when no dateFrom filter, and fill gaps with 0 through today (UTC)
       const todayUTC  = new Date().toISOString().slice(0, 10);
       const endDate   = dateTo && dateTo < todayUTC ? dateTo : todayUTC;
       const startDate = dateFrom
@@ -855,95 +885,130 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Filter options (for dropdowns) ───────────────────────────────────
-    const { data: allBrands } = await supabase
-      .from('conversations')
-      .select('brand')
-      .not('brand', 'is', null) as { data: Array<{ brand: string }> | null };
+    // Brand/agent/country options are global — they index every conversation
+    // in the DB and never change with the date filter, so they live on the
+    // global slice and stay cached across date-only filter changes.
+    let uniqueBrands: string[] = [];
+    let uniqueAgents: string[] = [];
+    let uniqueCountries: string[] = [];
+    if (wantGlobal) {
+      const [brandsRes, agentsRes, countriesRes] = await Promise.all([
+        supabase.from('conversations').select('brand').not('brand', 'is', null),
+        supabase.from('conversations').select('agent_name').not('agent_name', 'is', null),
+        supabase.from('conversations').select('player_country').not('player_country', 'is', null),
+      ]);
+      const allBrands    = brandsRes.data    as Array<{ brand: string }> | null;
+      const allAgents    = agentsRes.data    as Array<{ agent_name: string }> | null;
+      const allCountries = countriesRes.data as Array<{ player_country: string }> | null;
 
-    const { data: allAgents } = await supabase
-      .from('conversations')
-      .select('agent_name')
-      .not('agent_name', 'is', null) as { data: Array<{ agent_name: string }> | null };
-
-    const { data: allCountries } = await supabase
-      .from('conversations')
-      .select('player_country')
-      .not('player_country', 'is', null) as { data: Array<{ player_country: string }> | null };
-
-    const uniqueBrands = [...new Set((allBrands ?? []).map((r) => r.brand))].filter((b) => b?.toLowerCase() !== 'rooster partners').sort();
-    const uniqueAgents = [...new Set((allAgents ?? []).map((r) => r.agent_name))].sort();
-    // Country values come straight from Intercom contact.location.country and
-    // can have inconsistent casing ("Germany" vs "germany"); fold by lowercase
-    // and pick the most common variant as the display label.
-    const countryLabelByKey: Record<string, { label: string; count: number }> = {};
-    for (const r of allCountries ?? []) {
-      const raw = r.player_country?.trim();
-      if (!raw) continue;
-      const key = raw.toLowerCase();
-      if (!countryLabelByKey[key]) countryLabelByKey[key] = { label: raw, count: 0 };
-      countryLabelByKey[key].count += 1;
+      uniqueBrands = [...new Set((allBrands ?? []).map((r) => r.brand))].filter((b) => b?.toLowerCase() !== 'rooster partners').sort();
+      uniqueAgents = [...new Set((allAgents ?? []).map((r) => r.agent_name))].sort();
+      // Country values come straight from Intercom contact.location.country and
+      // can have inconsistent casing ("Germany" vs "germany"); fold by lowercase
+      // and pick the most common variant as the display label.
+      const countryLabelByKey: Record<string, { label: string; count: number }> = {};
+      for (const r of allCountries ?? []) {
+        const raw = r.player_country?.trim();
+        if (!raw) continue;
+        const key = raw.toLowerCase();
+        if (!countryLabelByKey[key]) countryLabelByKey[key] = { label: raw, count: 0 };
+        countryLabelByKey[key].count += 1;
+      }
+      uniqueCountries = Object.values(countryLabelByKey)
+        .map(({ label }) => label)
+        .sort((a, b) => a.localeCompare(b));
     }
-    const uniqueCountries = Object.values(countryLabelByKey)
-      .map(({ label }) => label)
-      .sort((a, b) => a.localeCompare(b));
 
     // Language options are derived from the DB-filtered analyzed rows (same
     // scope the category/issue options use), so the dropdown reflects languages
     // that actually exist within the current brand/agent/date selection.
-    const languageFreq: Record<string, number> = {};
-    for (const p of parsed) {
-      const lang = p.language?.trim();
-      if (!lang) continue;
-      const key = lang.toUpperCase();
-      languageFreq[key] = (languageFreq[key] ?? 0) + 1;
+    let uniqueLanguages: string[] = [];
+    if (wantScoped) {
+      const languageFreq: Record<string, number> = {};
+      for (const p of parsed) {
+        const lang = p.language?.trim();
+        if (!lang) continue;
+        const key = lang.toUpperCase();
+        languageFreq[key] = (languageFreq[key] ?? 0) + 1;
+      }
+      uniqueLanguages = Object.entries(languageFreq)
+        .sort((a, b) => b[1] - a[1])
+        .map(([label]) => label);
     }
-    const uniqueLanguages = Object.entries(languageFreq)
-      .sort((a, b) => b[1] - a[1])
-      .map(([label]) => label);
 
-    // When a category filter is active, the DB-level counts are global (the RPC
-    // has no category param).  Use the in-memory filtered counts instead so the
-    // stat cards reflect what the charts show.
-    const hasInMemoryFilter = hasCategoryFilter || hasIssueFilter || hasSeverityFilter || hasLanguageFilter || hasSegmentFilter || hasVipLevelFilter || dbFiltersAreMulti;
-    const overviewAnalyzed  = hasInMemoryFilter ? filteredRows.length  : analyzed;
-    const overviewAlertWorthy = hasInMemoryFilter
-      ? filteredRows.filter((r) => r.is_alert_worthy).length
-      : alertWorthy;
-    // "Total" and "Unanalyzed" require fetching non-analyzed rows we don't have;
-    // fall back to the analyzed count so the numbers are coherent.
-    const overviewTotal     = hasInMemoryFilter ? filteredRows.length  : total;
-    const overviewUnanalyzed = hasInMemoryFilter ? 0 : total - analyzed;
+    // ── Build response ───────────────────────────────────────────────────
+    // Each slice writes its own keys; when both are requested (no `part` query
+    // arg) the result is the legacy single-payload shape with `escalationStats`
+    // including pending counters and `filterOptions` carrying every dropdown.
+    const responseBody: Record<string, unknown> = {};
+    const filterOptions: Record<string, unknown> = {};
 
-    return NextResponse.json({
-      overview: {
+    if (wantScoped) {
+      // When a category filter is active, the DB-level counts are global (the RPC
+      // has no category param).  Use the in-memory filtered counts instead so the
+      // stat cards reflect what the charts show.
+      const hasInMemoryFilter = hasCategoryFilter || hasIssueFilter || hasSeverityFilter || hasLanguageFilter || hasSegmentFilter || hasVipLevelFilter || dbFiltersAreMulti;
+      const overviewAnalyzed  = hasInMemoryFilter ? filteredRows.length : analyzed;
+      const overviewAlertWorthy = hasInMemoryFilter
+        ? filteredRows.filter((r) => r.is_alert_worthy).length
+        : alertWorthy;
+      // "Total" and "Unanalyzed" require fetching non-analyzed rows we don't have;
+      // fall back to the analyzed count so the numbers are coherent.
+      const overviewTotal     = hasInMemoryFilter ? filteredRows.length : total;
+      const overviewUnanalyzed = hasInMemoryFilter ? 0 : total - analyzed;
+
+      responseBody.overview = {
         total:      overviewTotal,
         analyzed:   overviewAnalyzed,
         unanalyzed: overviewUnanalyzed,
         alertWorthy: overviewAlertWorthy,
         analyzedPct: overviewTotal > 0 ? Math.round((overviewAnalyzed / overviewTotal) * 100) : 0,
-      },
-      escalationStats,
-      issueSpikes,
-      dissatisfactionTrend,
-      weeklyIssueHeatmap,
-      dailyHourlyIssueHeatmap,
-      resolutionBreakdown,
-      severityBreakdown,
-      topCategories,
-      topItems,
-      languageBreakdown,
-      brandBreakdown,
-      agentBreakdown,
-      conversationsByDate,
-      filterOptions: {
-        brands: uniqueBrands,
-        agents: uniqueAgents,
-        languages: uniqueLanguages,
-        countries: uniqueCountries,
-        categories: allCategoryLabels,
-        issues: groupedIssues,
-      },
-    });
+      };
+      responseBody.escalationStats = {
+        totalEscalations,
+        resolved: resolvedEscalations,
+        closureRate,
+      };
+      responseBody.resolutionBreakdown = resolutionBreakdown;
+      responseBody.severityBreakdown   = severityBreakdown;
+      responseBody.topCategories       = topCategories;
+      responseBody.topItems            = topItems;
+      responseBody.languageBreakdown   = languageBreakdown;
+      responseBody.brandBreakdown      = brandBreakdown;
+      responseBody.agentBreakdown      = agentBreakdown;
+      responseBody.conversationsByDate = conversationsByDate;
+
+      filterOptions.languages  = uniqueLanguages;
+      filterOptions.categories = allCategoryLabels;
+      filterOptions.issues     = groupedIssues;
+    }
+
+    if (wantGlobal) {
+      responseBody.pendingEscalations    = { pendingUnder24h, pendingOver24h };
+      responseBody.issueSpikes           = issueSpikes;
+      responseBody.dissatisfactionTrend  = dissatisfactionTrend;
+      responseBody.weeklyIssueHeatmap    = weeklyIssueHeatmap;
+      responseBody.dailyHourlyIssueHeatmap = dailyHourlyIssueHeatmap;
+
+      filterOptions.brands    = uniqueBrands;
+      filterOptions.agents    = uniqueAgents;
+      filterOptions.countries = uniqueCountries;
+    }
+
+    responseBody.filterOptions = filterOptions;
+
+    // Legacy single-payload shape: when no `part` was requested, fold pending
+    // counters into escalationStats so older clients keep working unchanged.
+    if (!part && wantScoped && wantGlobal) {
+      responseBody.escalationStats = {
+        ...(responseBody.escalationStats as Record<string, unknown>),
+        pendingUnder24h,
+        pendingOver24h,
+      };
+      delete responseBody.pendingEscalations;
+    }
+
+    return NextResponse.json(responseBody);
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 500 });
   }
