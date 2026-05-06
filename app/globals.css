@@ -130,6 +130,17 @@ html.dark .scrollbar-slim { scrollbar-color: #475569 transparent; }
 html.dark .scrollbar-slim::-webkit-scrollbar-thumb { background: #475569; }
 html.dark .scrollbar-slim::-webkit-scrollbar-thumb:hover { background: #64748b; }
 
+/* Tiny scrollbar — narrower than slim, for cases that sit near the page
+   scrollbar (e.g. dropdowns on the right edge of the viewport). */
+.scrollbar-tiny { scrollbar-width: thin; scrollbar-color: #94a3b8 transparent; }
+html.dark .scrollbar-tiny { scrollbar-color: #475569 transparent; }
+.scrollbar-tiny::-webkit-scrollbar { width: 4px; height: 4px; }
+.scrollbar-tiny::-webkit-scrollbar-track { background: transparent; }
+.scrollbar-tiny::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 3px; }
+.scrollbar-tiny::-webkit-scrollbar-thumb:hover { background: #64748b; }
+html.dark .scrollbar-tiny::-webkit-scrollbar-thumb { background: #475569; }
+html.dark .scrollbar-tiny::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
 /* Pulsing "live" dot for the latest point on the Dissatisfaction Trend chart.
    Uses SVG `r` animation, supported in Chrome/Firefox/Safari 16+. */
 @keyframes trend-pulse {
