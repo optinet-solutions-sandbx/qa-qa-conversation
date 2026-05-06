@@ -513,7 +513,7 @@ export default function DashboardPage() {
 
   const forceRef = useRef(false);
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (signal?: AbortSignal) => {
     const params = new URLSearchParams();
     if (dateFrom)       params.set('dateFrom',       dateFrom);
     if (dateTo)         params.set('dateTo',         dateTo);
@@ -552,23 +552,36 @@ export default function DashboardPage() {
     }
 
     try {
-      const res = await fetch(`/api/dashboard?${params}`);
+      const res = await fetch(`/api/dashboard?${params}`, { signal });
       if (!res.ok) throw new Error('Failed to load dashboard');
       const json = await res.json();
+      if (signal?.aborted) return;
       setCached(cacheKey, json);
       setData(json);
       setError(null);
     } catch (e) {
+      // A superseded request was aborted by the next filter change — leave the
+      // newer request's state alone instead of flashing an error or clearing
+      // the spinner it just set.
+      if (signal?.aborted || (e as Error).name === 'AbortError') return;
       // If we already have stale cached data on screen, keep it visible rather
       // than blanking the dashboard with an error.
       if (!cached) setError((e as Error).message);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (!signal?.aborted) {
+        setLoading(false);
+        setRefreshing(false);
+      }
     }
   }, [dateFrom, dateTo, brands, agents, accountManagers, segments, vipLevels, languages, countries, categories, issues, severities, resolutions]);
 
-  useEffect(() => { fetchData(); }, [fetchData]);
+  // Abort the in-flight fetch whenever filters change so a slower earlier
+  // response can't land last and clobber the newer one's data.
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchData(controller.signal);
+    return () => controller.abort();
+  }, [fetchData]);
 
   const brandOptions    = data?.filterOptions.brands     ?? [];
   const agentOptions    = data?.filterOptions.agents     ?? [];
