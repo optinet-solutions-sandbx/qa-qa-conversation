@@ -170,9 +170,12 @@ export async function analyzeConversationSync(
 }
 
 // Run a batch of conversations through analyzeConversationSync sequentially,
-// pausing between calls to stay under gpt-4o's 30k TPM cap. Each call uses
-// ~10k tokens (fat system prompt + transcript + up to 4k completion); a 15s
-// gap holds sustained throughput at ~3 calls/min, just under the cap.
+// pausing between calls to ride gpt-4o's 30k TPM cap. Each call uses ~10k
+// tokens (fat system prompt + transcript + up to 4k completion); strict
+// pacing would be 20s, but 8s keeps a single cron tick (16 chats × ~7s API
+// + 15 × 8s sleep ≈ 232s) inside Vercel's 300s function ceiling. The 30k
+// TPM cap is enforced softly by analyzeConversationSync's 429 retry, which
+// honors OpenAI's retry-after hint.
 //
 // Used by the cron, the admin sync-analyze catch-up, and the admin reanalyze
 // endpoint so all three share the same pacing logic. Always returns one
@@ -184,7 +187,7 @@ export async function analyzeBatchSequential(
   apiKey: string,
   opts?: { delayMs?: number },
 ): Promise<SyncAnalysisResult[]> {
-  const delayMs = opts?.delayMs ?? 15_000;
+  const delayMs = opts?.delayMs ?? 8_000;
   const results: SyncAnalysisResult[] = [];
   for (let i = 0; i < conversations.length; i++) {
     if (i > 0) await sleep(delayMs);

@@ -19,15 +19,16 @@ export const maxDuration = 300;
 
 // ── Sync-analysis sizing ───────────────────────────────────────────────────
 // Each cron tick analyzes up to MAX_PER_TICK April-27+ conversations through
-// analyzeBatchSequential, which paces calls 15s apart to fit gpt-4o's 30k TPM
-// cap on tier-1 OpenAI accounts (~10k tokens/call → ~3 calls/min sustained).
-// Each call also self-retries once on 429 inside analyzeConversationSync.
+// analyzeBatchSequential, which paces calls 8s apart. gpt-4o tier-1 has a
+// 30k TPM cap and each call is ~10k tokens; strict pacing would be 20s, but
+// 8s keeps the tick under Vercel's 300s ceiling and the per-call 429 retry
+// in analyzeConversationSync absorbs occasional cap breaches.
 //
-// Per-tick budget: 16 calls × ~15s spacing ≈ 240s, comfortably under the 300s
-// Vercel function timeout. Cron schedule is */15 (96 ticks/day, see
-// vercel.json), so capacity = 16 × 96 = 1536 chats/day — well above the
-// 600–1000 daily volume target. If volume grows, raise MAX_PER_TICK only as
-// far as fits in 300s; further headroom requires an OpenAI tier upgrade.
+// Per-tick budget: 16 calls × ~7s API + 15 × 8s sleep ≈ 232s, inside the
+// 300s Vercel function timeout. Earlier 15s spacing pushed the budget to
+// ~305-385s and the function was 504-timing-out every tick (logs 2026-05-06).
+// Cron schedule is */15 (96 ticks/day, see vercel.json), so capacity ≈
+// 16 × 96 = 1536 chats/day — well above the 600–1000 daily volume target.
 const MAX_PER_TICK = 16;
 
 // ── Helpers ────────────────────────────────────────────────────────────────
