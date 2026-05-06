@@ -238,6 +238,18 @@ function shortDate(iso: string) {
   return `${d.getMonth() + 1}/${d.getDate()}`;
 }
 
+// Mirrors the server logic in app/api/dashboard/route.ts: the spike chart
+// compares the two most recent COMPLETED UTC days. `day` is the more recent
+// completed day (= "Yesterday" in user-facing copy), `prev` is the one before.
+function lastTwoCompletedUtcDayLabels() {
+  const startOfTodayUtc = new Date();
+  startOfTodayUtc.setUTCHours(0, 0, 0, 0);
+  const day  = new Date(startOfTodayUtc); day.setUTCDate(day.getUTCDate()  - 1);
+  const prev = new Date(startOfTodayUtc); prev.setUTCDate(prev.getUTCDate() - 2);
+  const f = (d: Date) => `${d.getUTCMonth() + 1}/${d.getUTCDate()}`;
+  return { day: f(day), prev: f(prev) };
+}
+
 // Ctrl/Cmd-click or middle-click → open in new tab instead of overlay
 function isNewTabClick(e?: { ctrlKey?: boolean; metaKey?: boolean; button?: number }): boolean {
   if (!e) return false;
@@ -1069,10 +1081,12 @@ export default function DashboardPage() {
 
             {/* Top 5 Issue Spikes — fixed last-2-completed-days comparison.
                 Per spec: never affected by global filters. */}
-            <Section title="Top 5 Issue Spikes - Today vs. Yesterday Comparison">
+            <Section title="Top 5 Issue Spikes - Yesterday vs Day Before">
               {data.issueSpikes.length === 0 ? (
                 <Empty message="Not enough data for the last 2 completed days" />
-              ) : (
+              ) : (() => {
+                const spikeDates = lastTwoCompletedUtcDayLabels();
+                return (
                 <ResponsiveContainer width="100%" height={290}>
                   <BarChart data={data.issueSpikes} margin={{ top: 8, right: 12, left: -10, bottom: 24 }}>
                     <defs>
@@ -1100,12 +1114,28 @@ export default function DashboardPage() {
                     />
                     <YAxis tick={{ fontSize: 11, fill: '#94a3b8' }} allowDecimals={false} />
                     <Tooltip content={<ChartTooltip />} cursor={{ fill: 'transparent' }} />
-                    <Legend wrapperStyle={{ fontSize: 11, paddingTop: 8 }} iconType="circle" iconSize={8} verticalAlign="bottom" />
-                    <Bar dataKey="today"     name="Today"     fill="url(#spikeToday)"     radius={[6, 6, 0, 0]} activeBar={{ filter: 'url(#barGlowSpike)' }} />
-                    <Bar dataKey="yesterday" name="Yesterday" fill="url(#spikeYesterday)" radius={[6, 6, 0, 0]} activeBar={{ filter: 'url(#barGlowSpike)' }} />
+                    <Legend
+                      wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+                      verticalAlign="bottom"
+                      content={() => (
+                        <div style={{ display: 'flex', justifyContent: 'center', gap: 16, fontSize: 11, paddingTop: 8 }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ width: 8, height: 8, borderRadius: 999, background: '#22d3ee', display: 'inline-block' }} />
+                            {`Yesterday (${spikeDates.day})`}
+                          </span>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: '#94a3b8' }}>
+                            <span style={{ width: 8, height: 8, borderRadius: 999, background: '#67e8f9', opacity: 0.65, display: 'inline-block' }} />
+                            {`Day Before (${spikeDates.prev})`}
+                          </span>
+                        </div>
+                      )}
+                    />
+                    <Bar dataKey="today"     name={`Yesterday (${spikeDates.day})`}    fill="url(#spikeToday)"     radius={[6, 6, 0, 0]} activeBar={{ filter: 'url(#barGlowSpike)' }} />
+                    <Bar dataKey="yesterday" name={`Day Before (${spikeDates.prev})`} fill="url(#spikeYesterday)" radius={[6, 6, 0, 0]} activeBar={{ filter: 'url(#barGlowSpike)' }} />
                   </BarChart>
                 </ResponsiveContainer>
-              )}
+                );
+              })()}
             </Section>
           </div>
 
