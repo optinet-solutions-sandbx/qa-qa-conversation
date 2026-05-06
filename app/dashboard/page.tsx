@@ -119,6 +119,7 @@ const RESOLUTION_COLORS: Record<string, string> = {
 };
 
 const SEVERITY_COLORS: Record<string, string> = {
+  'Level 0': '#34d399', // emerald — no/negligible dissatisfaction
   'Level 1': '#22d3ee', // cyan
   'Level 2': '#fb923c', // orange
   'Level 3': '#f472b6', // pink
@@ -695,7 +696,7 @@ export default function DashboardPage() {
         <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Severity</label>
           <MultiSelectFilter
-            options={['1', '2', '3']}
+            options={['0', '1', '2', '3']}
             selected={severities}
             onChange={setSeverities}
             placeholder="All severities"

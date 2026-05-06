@@ -81,16 +81,16 @@ export function parseAnalysisSummary(raw: string | null): AnalysisSummary {
   }
 }
 
-// Normalises the severity value to one of "Level 1" / "Level 2" / "Level 3"
-// so the dashboard and drill-down can compare across AI output variants
-// ("1", "1 — Minor", "Level 1", "Severity: 1", etc).  Returns null for
-// values that do not carry a 1/2/3 level, so callers can bucket them as
-// Unknown (covers legacy Low/Medium/High/Critical values from older prompts).
+// Normalises the severity value to one of "Level 0" / "Level 1" / "Level 2" /
+// "Level 3" so the dashboard and drill-down can compare across AI output
+// variants ("1", "1 — Minor", "Level 1", "Severity: 1", etc).  Returns null
+// for values that do not carry a 0/1/2/3 level, so callers can bucket them
+// as Unknown (covers legacy Low/Medium/High/Critical values from older prompts).
 export function normalizeSeverity(raw: string | number | null | undefined): string | null {
   if (raw == null) return null;
   const s = String(raw).trim();
   if (!s) return null;
-  const m = s.match(/[123]/);
+  const m = s.match(/[0123]/);
   if (!m) return null;
   return `Level ${m[0]}`;
 }
