@@ -512,6 +512,11 @@ export default function DashboardPage() {
   }, []);
 
   const forceRef = useRef(false);
+  // Cache key of whatever data is currently rendered. Used to decide whether
+  // a stale cache hit on a *different* filter combo should overwrite the
+  // screen — it shouldn't, because the numbers can be wildly out of date and
+  // flash misleading values before the fresh fetch lands.
+  const displayedKeyRef = useRef<string | null>(null);
 
   const fetchData = useCallback(async (signal?: AbortSignal) => {
     const params = new URLSearchParams();
@@ -538,14 +543,26 @@ export default function DashboardPage() {
     // we skip the network entirely; if stale, we silently refetch in the
     // background and swap in the new data when it arrives.
     const cached = force ? null : getCached(cacheKey);
-    if (cached) {
+    // Only paint stale cache when it matches the view we're already showing
+    // (true SWR refresh) or on initial mount (better than a blank screen).
+    // For filter changes, a stale cross-key hit would flash old numbers
+    // before the fresh fetch lands, so we keep the current data on screen.
+    const canPaintStale = displayedKeyRef.current === null
+      || displayedKeyRef.current === cacheKey;
+    if (cached && (!cached.isStale || canPaintStale)) {
       setData(cached.data);
       setError(null);
       setLoading(false);
+      displayedKeyRef.current = cacheKey;
       if (!cached.isStale) return;
       // Stale cache on screen — flag the background refetch so the user sees
       // that the displayed numbers may be out of date.
       setRefreshing(true);
+    } else if (displayedKeyRef.current !== null) {
+      // Filter change with no usable cache: keep the previous view on screen
+      // and let the spinner indicator signal a refetch.
+      setRefreshing(true);
+      setError(null);
     } else {
       setLoading(true);
       setError(null);
@@ -559,6 +576,7 @@ export default function DashboardPage() {
       setCached(cacheKey, json);
       setData(json);
       setError(null);
+      displayedKeyRef.current = cacheKey;
     } catch (e) {
       // A superseded request was aborted by the next filter change — leave the
       // newer request's state alone instead of flashing an error or clearing
