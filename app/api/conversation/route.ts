@@ -11,12 +11,12 @@ async function callOpenAI(
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${openAIKey}` },
     body: JSON.stringify({
-      model: 'gpt-4o',
+      model: 'gpt-5.4-mini',
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userMessage },
       ],
-      temperature: 0.3,
+      max_completion_tokens: 4096,
     }),
   });
   const data = await response.json();

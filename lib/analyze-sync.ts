@@ -57,16 +57,16 @@ export async function analyzeConversationSync(
   const startedAt = Date.now();
   try {
     const requestBody = JSON.stringify({
-      model: 'gpt-4o',
+      model: 'gpt-5.4-mini',
       messages: [
         { role: 'system', content: prompt.content },
         { role: 'user', content: buildUserMessage(conv) },
       ],
       // Match the manual "Run QA" button (app/api/conversation/route.ts) so
-      // automated cron output is identical to on-demand analysis. gpt-5-mini
-      // produced divergent verdicts (e.g. "Unresolved" / "Slow response times"
-      // where gpt-4o gives "Resolved" / "Delayed Follow-Ups").
-      temperature: 0.3,
+      // automated cron output is identical to on-demand analysis. gpt-5
+      // family rejects custom `temperature` and uses `max_completion_tokens`
+      // in place of `max_tokens`.
+      max_completion_tokens: 4096,
     });
 
     // Retry once on 429 — gpt-4o tier-1 has a tight 30k TPM cap and bursts
