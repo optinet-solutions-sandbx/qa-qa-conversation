@@ -193,6 +193,7 @@ export interface DbFilterInputs {
   brand?:    string | string[] | null;
   agent?:    string | string[] | null;
   accountManager?: string | string[] | null;
+  country?:  string | string[] | null;
   // Asana ticketing filters (used by Report Page drill-downs).
   // asana_ticketed=true narrows to rows that currently have a live Asana task.
   // asana_status further narrows that set to open vs closed; setting it
@@ -260,8 +261,9 @@ export function applyConversationDbFilters(q: AnySupabaseQuery, f: DbFilterInput
     q = q.or(`${col}.in.(${named.map(pgrstQuote).join(',')}),${col}.is.null`);
   };
 
-  applyMultiCol('brand',      toArray(f.brand));
-  applyMultiCol('agent_name', toArray(f.agent));
+  applyMultiCol('brand',         toArray(f.brand));
+  applyMultiCol('agent_name',    toArray(f.agent));
+  applyMultiCol('player_country', toArray(f.country));
 
   const ams = toArray(f.accountManager);
   if (ams.length > 0) {

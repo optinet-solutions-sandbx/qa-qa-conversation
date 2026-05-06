@@ -63,7 +63,7 @@ interface DashboardData {
   brandBreakdown: LabelCount[];
   agentBreakdown: LabelCount[];
   conversationsByDate: DateCount[];
-  filterOptions: { brands: string[]; agents: string[]; languages: string[]; categories: string[]; issues: { category: string; items: string[] }[] };
+  filterOptions: { brands: string[]; agents: string[]; languages: string[]; countries: string[]; categories: string[]; issues: { category: string; items: string[] }[] };
 }
 
 // ── Cache helpers ──────────────────────────────────────────────────────────
@@ -140,6 +140,7 @@ const OVERLAY_LABELS: Record<string, string> = {
   account_manager:          'Account Manager',
   segment:                  'Segment',
   vip_level:                'VIP Level',
+  player_country:           'Country',
   dateFrom:                 'Date',
   analyzed:                 'Analyzed',
   alert_worthy:             'Alert-worthy',
@@ -435,6 +436,7 @@ export default function DashboardPage() {
   const [segments, setSegments]                 = useState<string[]>([]);
   const [vipLevels, setVipLevels]               = useState<string[]>([]);
   const [languages, setLanguages]               = useState<string[]>([]);
+  const [countries, setCountries]               = useState<string[]>([]);
   const [categories, setCategories]             = useState<string[]>([]);
   const [issues, setIssues]                     = useState<string[]>([]);
   const [severities, setSeverities]             = useState<string[]>([]);
@@ -453,6 +455,7 @@ export default function DashboardPage() {
     passMulti('segment',         segments);
     passMulti('vip_level',       vipLevels);
     passMulti('language',        languages);
+    passMulti('player_country',  countries);
     passMulti('issue_category',  categories);
     passMulti('issue_item',      issues);
     passMulti('dissatisfaction_severity', severities.map((s) => `Level ${s}`));
@@ -484,7 +487,7 @@ export default function DashboardPage() {
     setOverlayTitle(title);
     setOverlayFilters(filters);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dateFrom, dateTo, brands, agents, accountManagers, segments, vipLevels, languages, categories, issues, severities]);
+  }, [dateFrom, dateTo, brands, agents, accountManagers, segments, vipLevels, languages, countries, categories, issues, severities]);
 
   // Restore overlay state from URL (used when a new tab is opened via Ctrl/middle-click)
   useEffect(() => {
@@ -512,6 +515,7 @@ export default function DashboardPage() {
     segments.forEach((s)        => params.append('segment',        s));
     vipLevels.forEach((v)       => params.append('vipLevel',       v));
     languages.forEach((l)       => params.append('language',       l));
+    countries.forEach((c)       => params.append('country',        c));
     categories.forEach((c)      => params.append('category',       c));
     issues.forEach((i)          => params.append('issue',          i));
     severities.forEach((s)      => params.append('severity',       s));
@@ -549,13 +553,14 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }, [dateFrom, dateTo, brands, agents, accountManagers, segments, vipLevels, languages, categories, issues, severities]);
+  }, [dateFrom, dateTo, brands, agents, accountManagers, segments, vipLevels, languages, countries, categories, issues, severities]);
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
   const brandOptions    = data?.filterOptions.brands     ?? [];
   const agentOptions    = data?.filterOptions.agents     ?? [];
   const languageOptions = data?.filterOptions.languages  ?? [];
+  const countryOptions  = data?.filterOptions.countries  ?? [];
   const categoryOptions = data?.filterOptions.categories ?? [];
   const issueGroups     = data?.filterOptions.issues     ?? [];
 
@@ -678,6 +683,16 @@ export default function DashboardPage() {
           />
         </div>
         <div>
+          <label className="block text-xs font-medium text-slate-500 mb-1">Country</label>
+          <MultiSelectFilter
+            options={countryOptions}
+            selected={countries}
+            onChange={setCountries}
+            placeholder="All countries"
+            emptyText="No countries yet"
+          />
+        </div>
+        <div>
           <label className="block text-xs font-medium text-slate-500 mb-1">Severity</label>
           <MultiSelectFilter
             options={['1', '2', '3']}
@@ -712,9 +727,9 @@ export default function DashboardPage() {
             disabled={categories.length === 0}
           />
         </div>
-        {(dateFrom || dateTo || brands.length > 0 || agents.length > 0 || accountManagers.length > 0 || segments.length > 0 || vipLevels.length > 0 || languages.length > 0 || severities.length > 0 || categories.length > 0 || issues.length > 0) && (
+        {(dateFrom || dateTo || brands.length > 0 || agents.length > 0 || accountManagers.length > 0 || segments.length > 0 || vipLevels.length > 0 || languages.length > 0 || countries.length > 0 || severities.length > 0 || categories.length > 0 || issues.length > 0) && (
           <button
-            onClick={() => { setDateFrom(''); setDateTo(''); setBrands([]); setAgents([]); setAccountManagers([]); setSegments([]); setVipLevels([]); setLanguages([]); setSeverities([]); setCategories([]); setIssues([]); }}
+            onClick={() => { setDateFrom(''); setDateTo(''); setBrands([]); setAgents([]); setAccountManagers([]); setSegments([]); setVipLevels([]); setLanguages([]); setCountries([]); setSeverities([]); setCategories([]); setIssues([]); }}
             className="text-xs text-slate-400 hover:text-slate-600 underline pb-1.5"
           >
             Clear filters
@@ -1141,19 +1156,17 @@ export default function DashboardPage() {
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
-                <div className="flex flex-wrap gap-x-6 gap-y-1.5 mt-2">
+                <div className="flex flex-wrap gap-x-10 gap-y-2 mt-3">
                   {data.severityBreakdown.map((s, i) => (
                     <div
                       key={i}
-                      className="flex items-center justify-between text-xs cursor-pointer hover:bg-slate-50 rounded px-1 -mx-1 transition-colors min-w-[140px]"
+                      className="flex items-center gap-2 text-sm cursor-pointer hover:bg-slate-50 rounded px-1.5 -mx-1.5 py-0.5 transition-colors"
                       onClick={(e) => navToConversations({ dissatisfaction_severity: s.label }, e)}
                       onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); navToConversations({ dissatisfaction_severity: s.label }, e); } }}
                     >
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-2.5 h-2.5 rounded-full" style={{ background: SEVERITY_COLORS[s.label] ?? COLORS[i % COLORS.length] }} />
-                        <span className="text-slate-600">{s.label}</span>
-                      </div>
-                      <span className="font-semibold text-slate-700 ml-3">{fmt(s.count)}</span>
+                      <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: SEVERITY_COLORS[s.label] ?? COLORS[i % COLORS.length] }} />
+                      <span className="text-slate-600">{s.label}</span>
+                      <span className="font-semibold text-slate-800">{fmt(s.count)}</span>
                     </div>
                   ))}
                 </div>
@@ -1342,13 +1355,13 @@ export default function DashboardPage() {
               <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                 <table className="w-full text-sm">
                   <thead className="sticky top-0 bg-white">
-                    <tr className="border-b border-slate-100">
-                      <th className="text-left py-2 pr-4 text-xs font-semibold text-slate-400 uppercase tracking-wide">Issue</th>
-                      <th className="text-left py-2 pr-4 text-xs font-semibold text-slate-400 uppercase tracking-wide">Category</th>
-                      <th className="text-right py-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Count</th>
+                    <tr className="border-b border-slate-200">
+                      <th className="text-left py-3 pr-4 text-xs font-semibold text-slate-600 uppercase tracking-wide">Issue</th>
+                      <th className="text-left py-3 pr-4 text-xs font-semibold text-slate-600 uppercase tracking-wide">Category</th>
+                      <th className="text-right py-3 text-xs font-semibold text-slate-600 uppercase tracking-wide">Count</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-slate-50">
+                  <tbody className="divide-y divide-slate-100">
                     {data.topItems.map((item, i) => (
                       <tr
                         key={i}
@@ -1356,10 +1369,10 @@ export default function DashboardPage() {
                         onClick={(e) => navToConversations({ issue_item: item.label }, e)}
                         onMouseDown={(e) => { if (e.button === 1) { e.preventDefault(); navToConversations({ issue_item: item.label }, e); } }}
                       >
-                        <td className="py-2.5 pr-4 text-slate-700 text-xs">{item.label}</td>
-                        <td className="py-2.5 pr-4 text-slate-400 text-xs">{item.category}</td>
-                        <td className="py-2.5 text-right">
-                          <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">{fmt(item.count)}</span>
+                        <td className="py-3 pr-4 text-slate-800 text-sm font-medium">{item.label}</td>
+                        <td className="py-3 pr-4 text-slate-500 text-sm">{item.category}</td>
+                        <td className="py-3 text-right">
+                          <span className="text-sm font-semibold text-blue-600 bg-blue-50 px-2.5 py-1 rounded-full">{fmt(item.count)}</span>
                         </td>
                       </tr>
                     ))}

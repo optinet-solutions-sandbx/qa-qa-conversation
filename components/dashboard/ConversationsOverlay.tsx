@@ -123,18 +123,19 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
             <table className="w-full text-sm border-collapse">
               <thead className="sticky top-0 bg-slate-50 z-10">
                 <tr>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Date</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Category</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Issue</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Summary</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Segment</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">VIP Level</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Player Name</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Chat Agent</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Account Manager</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Brand</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Language</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">Links</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Date</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Category</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Issue</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Summary</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Segment</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">VIP Level</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Player Name</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Chat Agent</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Account Manager</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Brand</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Language</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Country</th>
+                  <th className="text-left px-4 py-3 text-[13px] font-semibold text-slate-700 uppercase tracking-wide whitespace-nowrap">Links</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
@@ -147,21 +148,21 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                       });
                       return (
                         <>
-                          <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-500">
+                          <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-700">
                             {fmtDate(conv.intercom_created_at)}
                           </td>
                           <td className="px-4 py-3 max-w-[160px]">
-                            <span className="text-xs text-slate-600 truncate block" title={aiFields.category ?? ''}>
+                            <span className="text-sm text-slate-800 truncate block" title={aiFields.category ?? ''}>
                               {aiFields.category ?? '—'}
                             </span>
                           </td>
                           <td className="px-4 py-3 max-w-[200px]">
-                            <span className="text-xs text-slate-500 truncate block" title={aiFields.issue ?? conv.ai_issue_summary ?? ''}>
+                            <span className="text-sm text-slate-700 truncate block" title={aiFields.issue ?? conv.ai_issue_summary ?? ''}>
                               {aiFields.issue || conv.ai_issue_summary || '—'}
                             </span>
                           </td>
                           <td className="px-4 py-3 max-w-[260px]">
-                            <span className="text-xs text-slate-500 truncate block" title={aiFields.summary ?? ''}>
+                            <span className="text-sm text-slate-700 truncate block" title={aiFields.summary ?? ''}>
                               {aiFields.summary ?? '—'}
                             </span>
                           </td>
@@ -171,38 +172,41 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                     <td className="px-4 py-3 whitespace-nowrap">
                       {(() => {
                         const seg = getSegment(conv);
-                        if (!seg) return <span className="text-xs text-slate-300">—</span>;
-                        if (seg === 'VIP') return <span className="text-[11px] font-bold px-2 py-0.5 rounded text-yellow-600">VIP</span>;
-                        if (seg === 'SoftSwiss') return <span className="text-[11px] font-bold px-2 py-0.5 rounded text-slate-400">SoftSwiss</span>;
-                        return <span className="text-[11px] font-bold px-2 py-0.5 rounded text-blue-600">NON-VIP</span>;
+                        if (!seg) return <span className="text-xs text-slate-400">—</span>;
+                        if (seg === 'VIP') return <span className="text-xs font-bold px-2 py-0.5 rounded text-yellow-600">VIP</span>;
+                        if (seg === 'SoftSwiss') return <span className="text-xs font-bold px-2 py-0.5 rounded text-slate-600">SoftSwiss</span>;
+                        return <span className="text-xs font-bold px-2 py-0.5 rounded text-blue-600">NON-VIP</span>;
                       })()}
                     </td>
                     <td className="px-4 py-3 max-w-[140px]">
-                      <span className="text-xs text-slate-600 truncate block" title={getVipLevel(conv) ?? undefined}>
-                        {getVipLevel(conv) ?? <span className="text-slate-300">—</span>}
+                      <span className="text-sm text-slate-800 truncate block" title={getVipLevel(conv) ?? undefined}>
+                        {getVipLevel(conv) ?? <span className="text-slate-400">—</span>}
                       </span>
                     </td>
                     <td className="px-4 py-3 max-w-[160px]">
                       {(() => {
                         const name = cleanPlayerName(conv.player_name);
                         return (
-                          <span className="text-xs text-slate-600 truncate block" title={name ?? undefined}>
-                            {name ?? <span className="text-slate-300">—</span>}
+                          <span className="text-sm text-slate-800 truncate block" title={name ?? undefined}>
+                            {name ?? <span className="text-slate-400">—</span>}
                           </span>
                         );
                       })()}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-800">
                       {conv.agent_name ?? '—'}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600">
-                      {getAccountManager(conv) ?? <span className="text-slate-300">—</span>}
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-800">
+                      {getAccountManager(conv) ?? <span className="text-slate-400">—</span>}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-800">
                       {conv.brand ?? '—'}
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap text-xs text-slate-600">
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-800">
                       {conv.language ?? '—'}
+                    </td>
+                    <td className="px-4 py-3 whitespace-nowrap text-sm text-slate-800">
+                      {conv.player_country ?? '—'}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap">
                       <div className="flex items-center gap-2">
@@ -211,12 +215,12 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                             href={`https://app.intercom.com/a/apps/${INTERCOM_APP_ID}/conversations/${conv.intercom_id}`}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[11px] font-semibold text-sky-600 hover:text-sky-800 hover:underline"
+                            className="text-xs font-semibold text-sky-600 hover:text-sky-800 hover:underline"
                           >
                             Chat
                           </a>
                         ) : (
-                          <span className="text-[11px] text-slate-300">Chat</span>
+                          <span className="text-xs text-slate-400">Chat</span>
                         )}
                         <span className="text-slate-200 select-none">·</span>
                         {getBacklinkFull(conv) ? (
@@ -224,19 +228,19 @@ export default function ConversationsOverlay({ filters, title, onClose }: Props)
                             href={getBacklinkFull(conv)!}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[11px] font-semibold text-red-600 hover:text-red-800 hover:underline"
+                            className="text-xs font-semibold text-red-600 hover:text-red-800 hover:underline"
                           >
                             Account
                           </a>
                         ) : (
-                          <span className="text-[11px] text-slate-300">Account</span>
+                          <span className="text-xs text-slate-400">Account</span>
                         )}
                         <span className="text-slate-200 select-none">·</span>
                         <a
                           href={`/conversations/${conv.id}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-[11px] font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
+                          className="text-xs font-semibold text-indigo-600 hover:text-indigo-800 hover:underline"
                         >
                           Analysis
                         </a>

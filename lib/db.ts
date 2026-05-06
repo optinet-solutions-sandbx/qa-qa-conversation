@@ -433,6 +433,7 @@ export interface ConversationFilters {
   account_manager?: string | string[];
   segment?: string | string[];
   vip_level?: string | string[];
+  player_country?: string | string[];
   dateFrom?: string;
   dateTo?: string;
   analyzed?: boolean;
@@ -481,6 +482,7 @@ export async function loadConversations(
     brand:          filters.brand,
     agent:          filters.agent_name,
     accountManager: filters.account_manager,
+    country:        filters.player_country,
     asanaTicketed:  filters.asana_ticketed,
     asanaStatus:    filters.asana_status,
   });
@@ -517,6 +519,7 @@ function buildJsonFilterBaseQuery(fields: string, filters: ConversationFilters):
     brand:          filters.brand,
     agent:          filters.agent_name,
     accountManager: filters.account_manager,
+    country:        filters.player_country,
     asanaTicketed:  filters.asana_ticketed,
     asanaStatus:    filters.asana_status,
   });

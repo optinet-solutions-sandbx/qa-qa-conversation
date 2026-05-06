@@ -47,6 +47,7 @@ export async function GET(req: NextRequest) {
   const languages      = searchParams.getAll('language');
   const segments       = searchParams.getAll('segment');
   const vipLevels      = searchParams.getAll('vipLevel');
+  const countries      = searchParams.getAll('country');
 
   try {
     // Shared DB-level filter — the exact same helper is used by the drill-down
@@ -58,6 +59,7 @@ export async function GET(req: NextRequest) {
       brand:          brands,
       agent:          agents,
       accountManager: accountManagers,
+      country:        countries,
     });
 
     // ── Overview counts ──────────────────────────────────────────────────
@@ -523,6 +525,7 @@ export async function GET(req: NextRequest) {
       brand:          brands,
       agent:          agents,
       accountManager: accountManagers,
+      country:        countries,
     });
 
     const widerDbRows: Array<Record<string, unknown>> = [];
@@ -771,7 +774,9 @@ export async function GET(req: NextRequest) {
     // The RPC fast-path only takes a single brand/agent — when the user picks
     // multiple values for either, fall back to the in-memory aggregation so the
     // counts match the rest of the dashboard.
-    const dbFiltersAreMulti = brands.length > 1 || agents.length > 1 || accountManagers.length > 1;
+    // The conversations-by-date RPC accepts only single brand/agent and has no
+    // country param, so any of these conditions force the in-memory fallback.
+    const dbFiltersAreMulti = brands.length > 1 || agents.length > 1 || accountManagers.length > 1 || countries.length > 0;
     let conversationsByDate: { date: string; count: number }[];
     if (hasCategoryFilter || hasIssueFilter || hasSeverityFilter || hasLanguageFilter || hasSegmentFilter || hasVipLevelFilter || dbFiltersAreMulti) {
       const dateCounts: Record<string, number> = {};
@@ -836,8 +841,27 @@ export async function GET(req: NextRequest) {
       .select('agent_name')
       .not('agent_name', 'is', null) as { data: Array<{ agent_name: string }> | null };
 
+    const { data: allCountries } = await supabase
+      .from('conversations')
+      .select('player_country')
+      .not('player_country', 'is', null) as { data: Array<{ player_country: string }> | null };
+
     const uniqueBrands = [...new Set((allBrands ?? []).map((r) => r.brand))].filter((b) => b?.toLowerCase() !== 'rooster partners').sort();
     const uniqueAgents = [...new Set((allAgents ?? []).map((r) => r.agent_name))].sort();
+    // Country values come straight from Intercom contact.location.country and
+    // can have inconsistent casing ("Germany" vs "germany"); fold by lowercase
+    // and pick the most common variant as the display label.
+    const countryLabelByKey: Record<string, { label: string; count: number }> = {};
+    for (const r of allCountries ?? []) {
+      const raw = r.player_country?.trim();
+      if (!raw) continue;
+      const key = raw.toLowerCase();
+      if (!countryLabelByKey[key]) countryLabelByKey[key] = { label: raw, count: 0 };
+      countryLabelByKey[key].count += 1;
+    }
+    const uniqueCountries = Object.values(countryLabelByKey)
+      .map(({ label }) => label)
+      .sort((a, b) => a.localeCompare(b));
 
     // Language options are derived from the DB-filtered analyzed rows (same
     // scope the category/issue options use), so the dropdown reflects languages
@@ -891,6 +915,7 @@ export async function GET(req: NextRequest) {
         brands: uniqueBrands,
         agents: uniqueAgents,
         languages: uniqueLanguages,
+        countries: uniqueCountries,
         categories: allCategoryLabels,
         issues: groupedIssues,
       },
