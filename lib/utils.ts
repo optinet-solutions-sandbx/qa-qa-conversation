@@ -35,6 +35,7 @@ export function truncate(text: string, max: number): string {
 // ── Player attribute helpers (used in list + dashboard overlay) ──────────────
 
 import type { Conversation } from '@/lib/types';
+import { aliasIssueLabel } from '@/lib/analyticsFilters';
 
 function getCustomAttr(attrs: Record<string, unknown> | null, ...keys: string[]): string | null {
   if (!attrs) return null;
@@ -310,7 +311,8 @@ export function parseSummaryForTable(
       (typeof json.item === 'string' ? json.item : null) ??
       (typeof json.issue_item === 'string' ? json.issue_item : null) ??
       null;
-    const issue = rawIssue ? rawIssue.replace(/^\d+\.\s*/, '').trim() || null : null;
+    const aliasedIssue = aliasIssueLabel(rawIssue);
+    const issue = aliasedIssue ? aliasedIssue.replace(/^\d+\.\s*/, '').trim() || null : null;
 
     // Summary: json.summary is the canonical key; also try common alternatives
     const summary =

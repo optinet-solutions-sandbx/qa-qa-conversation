@@ -20,6 +20,30 @@ export interface AnalysisResult {
   dissatisfaction_severity?: string | number | null;
 }
 
+// Renames applied at parse time so old analyses (still carrying the AI's
+// previous wording in their stored summary JSON) merge with new analyses
+// in dashboard counts, dropdowns, exports and drill-downs. Key/value are
+// the bare item names without the leading "N. " prefix; aliasIssueLabel
+// preserves the prefix when rewriting.
+const ISSUE_ALIASES: Record<string, string> = {
+  'retention offers not satisfactory': 'Proactive Offers Not Satisfactory',
+};
+
+export function aliasIssueLabel(item: string | null | undefined): string | null {
+  if (item == null) return null;
+  const s = String(item);
+  const m = s.match(/^(\s*\d+\.\s*)(.*)$/);
+  const prefix = m ? m[1] : '';
+  const body   = (m ? m[2] : s).trim();
+  const key    = body.toLowerCase().replace(/s$/, '');
+  for (const [oldKey, newLabel] of Object.entries(ISSUE_ALIASES)) {
+    if (key === oldKey.toLowerCase().replace(/s$/, '')) {
+      return prefix + newLabel;
+    }
+  }
+  return s;
+}
+
 export interface AnalysisSummary {
   results: AnalysisResult[];
   resolution_status: string | null;
@@ -65,7 +89,11 @@ export function parseAnalysisSummary(raw: string | null): AnalysisSummary {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return empty;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const obj = parsed as Record<string, any>;
-    const results: AnalysisResult[] = Array.isArray(obj.results) ? obj.results : [];
+    const rawResults: AnalysisResult[] = Array.isArray(obj.results) ? obj.results : [];
+    const results: AnalysisResult[] = rawResults.map((r) => ({
+      ...r,
+      item: aliasIssueLabel(r?.item),
+    }));
     // Read severity from the top-level field first (older prompts), then fall
     // back to the worst severity reported inside any results[] entry (current
     // prompt nests it there).  This keeps the dashboard compatible with both
