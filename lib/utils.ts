@@ -322,3 +322,23 @@ export function parseSummaryForTable(
     return { category, issue, summary };
   } catch { return { category: null, issue: null, summary: null }; }
 }
+
+// Pulls the AI's `key_quotes` array out of the raw summary JSON. Returns an
+// empty list when the field is missing or not a string array — callers can
+// just skip rendering rather than special-casing each shape.
+export function parseKeyQuotesFromSummary(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const json = JSON.parse(stripSummaryFences(raw));
+    if (!json || typeof json !== 'object' || Array.isArray(json)) return [];
+    const arr = (json as Record<string, unknown>).key_quotes;
+    if (!Array.isArray(arr)) return [];
+    const out: string[] = [];
+    for (const q of arr) {
+      if (typeof q !== 'string') continue;
+      const t = q.trim();
+      if (t) out.push(t);
+    }
+    return out;
+  } catch { return []; }
+}

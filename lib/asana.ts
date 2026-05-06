@@ -75,7 +75,7 @@
 // re-analysis of that conversation will NOT silently re-create the ticket
 // the user deleted on purpose.
 
-import { cleanPlayerName, getVipLevel, getBacklinkFull, parseSummaryForTable, getSegment } from '@/lib/utils';
+import { cleanPlayerName, getVipLevel, getBacklinkFull, parseSummaryForTable, parseKeyQuotesFromSummary, getSegment } from '@/lib/utils';
 import { evaluateEscalation, severityToNumber, extractCategoryNumbers } from '@/lib/escalationRules';
 
 const ASANA_API = 'https://app.asana.com/api/1.0';
@@ -758,6 +758,18 @@ function buildTaskNotes(input: AsanaTaskInput): string {
   lines.push('');
   const narrative = parseSummaryForTable(input.summaryText).summary;
   lines.push(narrative ?? '—');
+
+  const quotes = parseKeyQuotesFromSummary(input.summaryText);
+  if (quotes.length > 0) {
+    lines.push('');
+    lines.push(SPACER);
+    lines.push('Key Quotes');
+    lines.push('');
+    quotes.forEach((q, i) => {
+      const stripped = q.replace(/^["“”]+|["“”]+$/g, '').trim();
+      lines.push(`${i + 1}. "${stripped}"`);
+    });
+  }
   return lines.join('\n');
 }
 
