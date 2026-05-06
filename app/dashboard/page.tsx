@@ -91,6 +91,10 @@ function getCached(key: string): { data: DashboardData; isStale: boolean } | nul
     const raw = localStorage.getItem(`dashboard:${key}`);
     if (!raw) return null;
     const { data, fetchedAt } = JSON.parse(raw) as { data: DashboardData; fetchedAt: number };
+    // Skip empty cached payloads — these almost always come from the first
+    // visit early in the day before ingest has caught up, and serving them
+    // makes the dashboard look broken (all zeros) until the bg refetch lands.
+    if (!data?.overview?.total) return null;
     return { data, isStale: Date.now() - fetchedAt > CACHE_TTL };
   } catch {
     return null;
@@ -420,6 +424,7 @@ function MultiSelectFilter({ options, groups, selected, onChange, placeholder, e
 export default function DashboardPage() {
   const [data, setData]       = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [error, setError]     = useState<string | null>(null);
 
   // Overlay state
@@ -538,6 +543,9 @@ export default function DashboardPage() {
       setError(null);
       setLoading(false);
       if (!cached.isStale) return;
+      // Stale cache on screen — flag the background refetch so the user sees
+      // that the displayed numbers may be out of date.
+      setRefreshing(true);
     } else {
       setLoading(true);
       setError(null);
@@ -556,6 +564,7 @@ export default function DashboardPage() {
       if (!cached) setError((e as Error).message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   }, [dateFrom, dateTo, brands, agents, accountManagers, segments, vipLevels, languages, countries, categories, issues, severities, resolutions]);
 
@@ -595,15 +604,23 @@ export default function DashboardPage() {
           <h1 className="text-xl font-bold text-slate-800">Analytics Dashboard</h1>
           <p className="text-sm text-slate-400 mt-0.5">QA insights from collected conversations</p>
         </div>
-        <button
-          onClick={() => { forceRef.current = true; fetchData(); }}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-          </svg>
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          {refreshing && (
+            <div className="flex items-center gap-1.5 text-xs text-slate-400">
+              <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+              Refreshing…
+            </div>
+          )}
+          <button
+            onClick={() => { forceRef.current = true; fetchData(); }}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-500 border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Filter bar */}

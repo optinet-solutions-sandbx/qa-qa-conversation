@@ -38,21 +38,23 @@ function coerceSeverity(v: unknown): string | null {
   return null;
 }
 
-// Picks the worst (max) 1/2/3 severity found across the results[] entries.
+// Picks the worst (max) 0/1/2/3 severity found across the results[] entries.
 // The current prompt nests `dissatisfaction_severity` inside each result item
 // rather than at the top level, so without this fallback every analysed chat
-// looks like Unknown even when the AI did return a severity.
+// looks like Unknown even when the AI did return a severity. Initialised to
+// -1 so a legitimate Level 0 finding is preserved instead of collapsing into
+// the "no severity reported" sentinel.
 function maxResultSeverity(results: AnalysisResult[]): string | null {
-  let max = 0;
+  let max = -1;
   for (const r of results) {
     const s = coerceSeverity(r?.dissatisfaction_severity);
     if (!s) continue;
-    const m = s.match(/[123]/);
+    const m = s.match(/[0123]/);
     if (!m) continue;
     const n = parseInt(m[0], 10);
     if (n > max) max = n;
   }
-  return max > 0 ? String(max) : null;
+  return max >= 0 ? String(max) : null;
 }
 
 export function parseAnalysisSummary(raw: string | null): AnalysisSummary {

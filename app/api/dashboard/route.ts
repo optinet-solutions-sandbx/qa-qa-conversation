@@ -63,6 +63,50 @@ export async function GET(req: NextRequest) {
       country:        countries,
     });
 
+    const PAGE_SIZE = 1000;
+
+    // ── Wider 30-day window (kicked off in parallel with the main fetch) ──
+    // The 30-day load powers the trend + heatmap widgets and is independent of
+    // the user's date filter. We compute its bounds here and start the
+    // pagination loop immediately so it runs alongside the count queries and
+    // the main row fetch instead of waiting for them to finish.
+    const widerEndUTC = new Date();
+    widerEndUTC.setUTCHours(0, 0, 0, 0);
+    widerEndUTC.setUTCDate(widerEndUTC.getUTCDate() + 1); // exclusive: start of tomorrow UTC
+    const widerStartUTC = new Date(widerEndUTC);
+    widerStartUTC.setUTCDate(widerStartUTC.getUTCDate() - 31); // 30 inclusive days
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const applyWiderDbFilters = (q: any) => applyConversationDbFilters(q, {
+      dateFrom: widerStartUTC.toISOString(),
+      brand:          brands,
+      agent:          agents,
+      accountManager: accountManagers,
+      country:        countries,
+    });
+
+    const widerRowsPromise = (async () => {
+      const out: Array<Record<string, unknown>> = [];
+      let idx = 0;
+      while (true) {
+        const { data: page } = await applyWiderDbFilters(
+          supabase
+            .from('conversations')
+            .select('id, summary, language, intercom_created_at, dissatisfaction_severity, player_tags, player_segments, player_companies, tags, player_custom_attributes')
+            .not('summary', 'is', null)
+            .lt('intercom_created_at', widerEndUTC.toISOString())
+            .order('intercom_created_at', { ascending: false })
+            .order('id', { ascending: false })
+            .range(idx, idx + PAGE_SIZE - 1)
+        ) as { data: Array<Record<string, unknown>> | null };
+        if (!page || page.length === 0) break;
+        out.push(...page);
+        if (page.length < PAGE_SIZE) break;
+        idx += PAGE_SIZE;
+      }
+      return out;
+    })();
+
     // ── Overview counts ──────────────────────────────────────────────────
     const [totalRes, analyzedRes, alertRes] = await Promise.all([
       applyFilters(supabase.from('conversations').select('*', { count: 'exact', head: true })),
@@ -75,7 +119,6 @@ export async function GET(req: NextRequest) {
     const alertWorthy = alertRes.count   ?? 0;
 
     // ── Analyzed conversations (paginated to bypass 1000-row default limit) ──
-    const PAGE_SIZE = 1000;
     const allAnalyzedRows: Array<Record<string, unknown>> = [];
     let from = 0;
 
@@ -525,43 +568,10 @@ export async function GET(req: NextRequest) {
     // ── Wider 30-day load: powers Weekly + Daily/Hourly Heat Maps and Trend ──
     // These widgets have time semantics independent of the global dateFrom/dateTo
     // (Weekly is fixed last 7 days, others default to 30 days), so they need
-    // their own load. Brand/agent/AM still apply at the DB level; the in-memory
-    // filters below mirror what the main pipeline does for filteredParsed.
-    const widerEndUTC = new Date();
-    widerEndUTC.setUTCHours(0, 0, 0, 0);
-    widerEndUTC.setUTCDate(widerEndUTC.getUTCDate() + 1); // exclusive: start of tomorrow UTC
-    const widerStartUTC = new Date(widerEndUTC);
-    widerStartUTC.setUTCDate(widerStartUTC.getUTCDate() - 31); // 30 inclusive days
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const applyWiderDbFilters = (q: any) => applyConversationDbFilters(q, {
-      dateFrom: widerStartUTC.toISOString(),
-      brand:          brands,
-      agent:          agents,
-      accountManager: accountManagers,
-      country:        countries,
-    });
-
-    const widerDbRows: Array<Record<string, unknown>> = [];
-    {
-      let idx = 0;
-      while (true) {
-        const { data: page } = await applyWiderDbFilters(
-          supabase
-            .from('conversations')
-            .select('id, summary, language, intercom_created_at, dissatisfaction_severity, player_tags, player_segments, player_companies, tags, player_custom_attributes')
-            .not('summary', 'is', null)
-            .lt('intercom_created_at', widerEndUTC.toISOString())
-            .order('intercom_created_at', { ascending: false })
-            .order('id', { ascending: false })
-            .range(idx, idx + PAGE_SIZE - 1)
-        ) as { data: Array<Record<string, unknown>> | null };
-        if (!page || page.length === 0) break;
-        widerDbRows.push(...page);
-        if (page.length < PAGE_SIZE) break;
-        idx += PAGE_SIZE;
-      }
-    }
+    // their own load. The actual fetch was kicked off at the top of the handler
+    // so it overlaps with the main fetch + processing — here we just await the
+    // resulting rows and dedupe by id (defensive, mirrors the main pipeline).
+    const widerDbRows = await widerRowsPromise;
     const seenWiderIds = new Set<string>();
     const widerRows = widerDbRows.filter((r) => {
       const id = r.id as string | undefined;
