@@ -223,26 +223,34 @@ export async function GET(req: NextRequest) {
     }
     const numPrefix = (s: string) => { const m = s.match(/^(\d+)\./); return m ? parseInt(m[1], 10) : 999; };
     const minCategoryCount = Math.max(3, Math.ceil(rows.length * 0.003));
-    const EXCLUDED_CATEGORY_PREFIXES = new Set([5]);
+    const EXCLUDED_CATEGORY_PREFIXES = new Set<number>();
     const canonicalCategories = [
       '1. Account Closure & Self-Exclusion Requests',
       '2. Payments (Deposits, Limits, Refunds)',
       '3. Withdrawal Disputes',
       '4. Player Experience & Expectations (Retention)',
+      '5. Verification Issues',
+      '6. Bonus Codes & Promotions Issues',
+      '7. Technical Issues',
+      '8. Sportsbook Issues',
     ];
-    // Build a map of numeric prefix → canonical key so variants like
-    // "1. Account Closure Requests" get folded into the canonical entry.
+    // Build a map of numeric prefix → canonical key (and label) so variants
+    // like "1. Account Closure Requests" get folded into the canonical entry.
     const canonicalKeyByPrefix: Record<number, string> = {};
+    const canonicalLabelByPrefix: Record<number, string> = {};
     for (const label of canonicalCategories) {
       const p = numPrefix(label);
-      if (p !== 999) canonicalKeyByPrefix[p] = label.toLowerCase().trim();
+      if (p !== 999) {
+        canonicalKeyByPrefix[p] = label.toLowerCase().trim();
+        canonicalLabelByPrefix[p] = label;
+      }
     }
     // Fold any data-driven variant that shares a prefix with a canonical into it
     for (const key of Object.keys(allCategoryFreq)) {
       const p = numPrefix(key);
       const canonKey = canonicalKeyByPrefix[p];
       if (canonKey && key !== canonKey) {
-        if (!allCategoryFreq[canonKey]) allCategoryFreq[canonKey] = { count: 0, label: canonicalCategories[p - 1] };
+        if (!allCategoryFreq[canonKey]) allCategoryFreq[canonKey] = { count: 0, label: canonicalLabelByPrefix[p] };
         allCategoryFreq[canonKey].count += allCategoryFreq[key].count;
         delete allCategoryFreq[key];
       }
@@ -290,6 +298,71 @@ export async function GET(req: NextRequest) {
       allIssueFreq[key].labelCounts[clean] = (allIssueFreq[key].labelCounts[clean] ?? 0) + 1;
       const [topLabel] = Object.entries(allIssueFreq[key].labelCounts).sort((a, b) => b[1] - a[1])[0];
       allIssueFreq[key].label = topLabel;
+    }
+
+    // Canonical issue taxonomy — these are guaranteed in the dropdown for each
+    // canonical category regardless of whether the AI has emitted them yet, so
+    // a brand-new deployment or a quiet category still has the full filter
+    // list available. Definition order also drives the in-group sort order.
+    const canonicalIssuesByPrefix: Record<number, string[]> = {
+      1: ['Account Closure Requests', 'Self-Exclusion Requests'],
+      2: ['Deposit Declines', 'Payment Method Unavailabilities', 'Pending Deposits', 'Refund Requests', 'Limit Requests'],
+      3: ['Winnings Decision Disputes (Cut / Voided)', 'Withdrawal Delays', 'Withdrawal Rejections / Missing Payouts'],
+      4: [
+        'Not Enough Bonuses or Cashback',
+        'Competitor Comparison Dissatisfactions',
+        'Proactive Offers Not Satisfactory',
+        'Lack of VIP Attention',
+        'Reopen Delays (24h Restriction)',
+        'Withdrawal Limit Dissatisfactions',
+        'Limit Changes Not Applied',
+        'Trust / Fairness Concerns',
+        'Scam Accusations',
+        'Issues Not Resolved',
+        'Slow Response Times',
+        'Lack of Clear Communication',
+        'Delayed Follow-Ups',
+      ],
+      6: ['Bonuses Not Credited', 'Bonus Codes Not Working', 'Bonus / Promotion Conditions Unclear'],
+      7: [
+        'Login Issues',
+        'Password Reset Issues',
+        'Session Timeouts / Auto Logouts',
+        'Game Performance Issues',
+        'Unfinished Rounds',
+        'Incorrect Game Results',
+        'Website Outages',
+        'Broken Links',
+        'Website Feature Malfunctions',
+        'Hard-to-Find Features (UX Issues)',
+        'Website / Platform Slow / Lagging',
+      ],
+      8: ['Bets Not Placed', 'Incorrectly Settled Bets', 'Odds Issues'],
+    };
+    for (const [pfxStr, items] of Object.entries(canonicalIssuesByPrefix)) {
+      const pfx = parseInt(pfxStr, 10);
+      items.forEach((canonLabel, i) => {
+        const key = normalizeIssueKey(canonLabel);
+        const order = i + 1;
+        if (!allIssueFreq[key]) {
+          allIssueFreq[key] = {
+            label: canonLabel,
+            catPrefix: pfx,
+            order,
+            count: minIssueCount,
+            labelCounts: { [canonLabel]: minIssueCount },
+          };
+        } else {
+          // Existing data-driven entry: force the canonical label/order/prefix
+          // so the dropdown reads from the curated taxonomy, and floor the
+          // count so the entry survives the qualifiedIssues filter even when
+          // the AI has emitted it fewer than minIssueCount times.
+          allIssueFreq[key].label = canonLabel;
+          allIssueFreq[key].catPrefix = pfx;
+          allIssueFreq[key].order = order;
+          allIssueFreq[key].count = Math.max(allIssueFreq[key].count, minIssueCount);
+        }
+      });
     }
     const qualifiedIssues = Object.values(allIssueFreq).filter(({ count }) => count >= minIssueCount);
     const groupedIssues = canonicalCategories
