@@ -25,6 +25,16 @@ function MoonIcon() {
   );
 }
 
+// Why the portal SSO callback bounced someone back here, keyed by the ?error=
+// code it redirects with (see app/auth/portal-callback/route.ts). Without this
+// a failed SSO hand-off would render as a blank login form with no explanation.
+const SSO_ERRORS: Record<string, string> = {
+  sso: 'Single sign-on failed — that portal link is invalid or has expired. Try again from the portal.',
+  sso_config: 'Single sign-on is not configured on this dashboard. Contact an admin.',
+  provision: 'Could not set up your account. Contact an admin.',
+  access: 'Your account is not active on this dashboard. Contact an admin.',
+};
+
 function LoginForm() {
   const router = useRouter();
   const sp = useSearchParams();
@@ -44,7 +54,7 @@ function LoginForm() {
   const [password, setPassword] = useState('');
   const [email, setEmail] = useState('');
   const [team, setTeam] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() => SSO_ERRORS[sp.get('error') ?? ''] ?? null);
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 

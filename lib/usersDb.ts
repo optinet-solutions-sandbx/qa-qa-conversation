@@ -63,6 +63,29 @@ export async function dbFindAuthUser(username: string): Promise<AuthUser | null>
   };
 }
 
+// Email lookup for the portal SSO callback — the portal asserts an email, not a
+// username. Unlike username there is no unique index on email, so if two rows
+// share one we take the oldest (the original account) to stay deterministic
+// across logins rather than flip-flopping between duplicates.
+export async function dbFindUserByEmail(email: string): Promise<AppUser | null> {
+  const key = email.trim().toLowerCase();
+  if (!key) return null;
+  const { data, error } = await supabase
+    .from(TABLE)
+    .select('id, username, email, team, role, status, snapshot, created_at, approved_at, approved_by')
+    .ilike('email', key)
+    .order('created_at', { ascending: true });
+  if (error) {
+    console.error('[usersDb] findUserByEmail:', error.message);
+    return null;
+  }
+  // ILIKE treats `_` (legal in an email local part) as a single-char wildcard,
+  // so the query can only ever return a SUPERSET of the real matches — re-filter
+  // on exact equality here rather than trusting the first row back.
+  const exact = (data ?? []).find((r) => (r.email ?? '').toLowerCase() === key);
+  return exact ? mapUser(exact) : null;
+}
+
 // True if a username is already taken (case-insensitive). Used by registration
 // + seed to avoid duplicate rows that the unique index would otherwise reject.
 export async function dbUsernameExists(username: string): Promise<boolean> {

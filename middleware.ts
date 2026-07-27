@@ -3,10 +3,12 @@ import type { NextRequest } from 'next/server';
 import { AUTH_COOKIE, verifyToken } from '@/lib/auth';
 
 // Bypass list: cron endpoints (they use CRON_SECRET bearer), the auth API itself,
-// the login page, and Next.js static/build assets. Everything else must carry a
-// valid qa_auth cookie.
+// the portal SSO callback (it arrives logged-out and mints the cookie itself,
+// after verifying the portal's signed token), the login page, and Next.js
+// static/build assets. Everything else must carry a valid qa_auth cookie.
 function isPublicPath(pathname: string): boolean {
   if (pathname === '/login') return true;
+  if (pathname === '/auth/portal-callback') return true;
   if (pathname.startsWith('/api/auth/')) return true;
   if (pathname.startsWith('/api/cron/')) return true;
   if (pathname.startsWith('/_next/')) return true;
