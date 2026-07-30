@@ -3,7 +3,8 @@ import type { NextRequest } from 'next/server';
 import { supabase } from '@/lib/supabase';
 import { dbGetAsanaConversationContext } from '@/lib/db';
 import { parseAnalysisSummary, normalizeSeverity } from '@/lib/analyticsFilters';
-import { getSegment } from '@/lib/utils';
+import { getBacklinkFull, getSegment } from '@/lib/utils';
+import { matchEscalationExclusion } from '@/lib/escalationExclusions';
 import {
   evaluateEscalation,
   severityToNumber,
@@ -114,7 +115,15 @@ export async function GET(req: NextRequest) {
   const segment = getSegment(ctx);
   const categoryNumbers = extractCategoryNumbers(issueCategories);
   const resolution = normalizeResolution(parsed.resolution_status);
-  const decision = evaluateEscalation(segment, severityNum, resolution, issueItems);
+
+  // Mirror the live gate: the per-player opt-out short-circuits the matrix.
+  const excluded = matchEscalationExclusion({
+    playerEmail: ctx.player_email,
+    backlinkFull: getBacklinkFull(ctx),
+  });
+  const decision = excluded
+    ? { escalate: false, reason: `player-excluded:${excluded}` }
+    : evaluateEscalation(segment, severityNum, resolution, issueItems);
 
   return NextResponse.json({
     conversation_id: row.id,
@@ -130,6 +139,7 @@ export async function GET(req: NextRequest) {
       raw_categories: issueCategories,
       raw_issues: issueItems,
       matched_category_numbers: categoryNumbers,
+      player_excluded: excluded,
     },
     decision,
     already_escalated: !!ctx.asana_task_gid,

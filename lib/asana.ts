@@ -79,6 +79,7 @@
 
 import { cleanPlayerName, getVipLevel, getBacklinkFull, parseSummaryForTable, parseKeyQuotesFromSummary, getSegment } from '@/lib/utils';
 import { evaluateEscalation, severityToNumber, normalizeResolution } from '@/lib/escalationRules';
+import { matchEscalationExclusion } from '@/lib/escalationExclusions';
 
 const ASANA_API = 'https://app.asana.com/api/1.0';
 
@@ -322,8 +323,12 @@ async function getProjectSections(): Promise<Map<string, string>> {
 }
 
 // Board column used for escalations whose AM can't be resolved from the
-// player's Intercom groups. Auto-created on first use, same as AM columns.
-const UNASSIGNED_SECTION_NAME = 'Unassigned';
+// player's Intercom groups. These used to go to a dedicated "Unassigned"
+// column; since 2026-07-30 they default to the Geri/Martin/Allan team, who
+// triage no-AM players. The old "Unassigned" column is left in place — tickets
+// already sitting there are not moved. Resolved through the same name lookup
+// as AM columns, so it is auto-created if the column is ever renamed away.
+const UNRESOLVED_AM_SECTION_NAME = 'Geri/Martin/Allan';
 
 // True if the given section gid is still a live section in the project. Used to
 // guard the ASANA_SECTION_GID env fallback — Asana ignores an unknown section
@@ -961,6 +966,17 @@ export async function maybeCreateAsanaTicketForConversation(
       if (it && !seenItem.has(it)) { seenItem.add(it); issueItems.push(it); }
     }
 
+    // Per-player opt-out (lib/escalationExclusions.ts) — checked before the
+    // matrix so an excluded player never escalates on any severity or issue.
+    const excluded = matchEscalationExclusion({
+      playerEmail: ctx.player_email,
+      backlinkFull: getBacklinkFull(ctx),
+    });
+    if (excluded) {
+      console.log(`[asana] skip escalation for ${conversationId}: player-excluded (${excluded})`);
+      return null;
+    }
+
     // Gate against the (issue, severity, resolution, segment) escalation
     // matrix — SoftSwiss never escalates; sev 2/3 always escalate for VIP and
     // NON-VIP; sev 0/1 cells depend on the per-issue pattern. See
@@ -1017,13 +1033,29 @@ export async function createAsanaTaskForConversation(
     return null;
   }
 
+  // Same belt-and-braces guard for per-player opt-outs: the gate above already
+  // filters them, but admin/test paths call this function directly.
+  const excludedPlayer = matchEscalationExclusion({
+    playerEmail: input.playerEmail,
+    backlinkFull: input.backlinkFull,
+  });
+  if (excludedPlayer) {
+    console.log(
+      `[asana] skip ticket creation for excluded player ${excludedPlayer} ` +
+      `(conversation=${input.conversationId})`,
+    );
+    return null;
+  }
+
   const token = process.env.ASANA_ACCESS_TOKEN!;
   const projectGid = process.env.ASANA_PROJECT_GID!;
 
   // Per-ticket routing: find or auto-create the column matching the AM. When
-  // the AM can't be resolved (missing/unknown AM group), route to a dedicated
-  // "Unassigned" column so the escalation stays visible and triageable instead
-  // of silently landing in whatever the board's first column happens to be.
+  // the AM can't be resolved (missing/unknown AM group), route to the
+  // Geri/Martin/Allan column so the escalation stays visible and triageable
+  // instead of silently landing in whatever the board's first column happens
+  // to be. Only the column is defaulted — the AM custom field and the assignee
+  // stay empty, so the ticket still reads as "no AM resolved".
   //
   // We deliberately do NOT blindly trust ASANA_SECTION_GID as the fallback:
   // Asana silently ignores an unknown section gid (rather than erroring), so a
@@ -1033,9 +1065,9 @@ export async function createAsanaTaskForConversation(
   let sectionGid = await ensureSectionForAccountManager(input.accountManager);
   if (!sectionGid) {
     if (input.accountManager) {
-      console.warn(`[asana] could not ensure section for account manager: ${input.accountManager}; routing to ${UNASSIGNED_SECTION_NAME}`);
+      console.warn(`[asana] could not ensure section for account manager: ${input.accountManager}; routing to ${UNRESOLVED_AM_SECTION_NAME}`);
     }
-    sectionGid = await ensureSectionForAccountManager(UNASSIGNED_SECTION_NAME);
+    sectionGid = await ensureSectionForAccountManager(UNRESOLVED_AM_SECTION_NAME);
   }
   if (!sectionGid) {
     const envGid = process.env.ASANA_SECTION_GID ?? null;
