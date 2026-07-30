@@ -330,6 +330,28 @@ async function getProjectSections(): Promise<Map<string, string>> {
 // as AM columns, so it is auto-created if the column is ever renamed away.
 const UNRESOLVED_AM_SECTION_NAME = 'Geri/Martin/Allan';
 
+// The three people behind that column. A no-AM escalation is handed to one of
+// them (AM field + assignee) so it has a real owner instead of sitting
+// unclaimed — Val asked for these to be "randomised" across the trio
+// (2026-07-30). The ticket still goes to the shared Geri/Martin/Allan column;
+// only the ownership is spread.
+//
+// The pick is a hash of the conversation id rather than Math.random() so it is
+// stable: a retried or re-analysed conversation always resolves to the same
+// person instead of flip-flopping between runs. Conversation ids are uuids, so
+// the distribution across tickets is even.
+const UNRESOLVED_AM_OWNERS = ['Geri', 'Martin', 'Allan'] as const;
+
+function pickUnresolvedAmOwner(conversationId: string): string {
+  // FNV-1a — short, dependency-free, and well distributed over uuid strings.
+  let h = 2166136261;
+  for (let i = 0; i < conversationId.length; i++) {
+    h ^= conversationId.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return UNRESOLVED_AM_OWNERS[(h >>> 0) % UNRESOLVED_AM_OWNERS.length];
+}
+
 // True if the given section gid is still a live section in the project. Used to
 // guard the ASANA_SECTION_GID env fallback — Asana ignores an unknown section
 // gid silently, so a stale value would otherwise route tickets to the default
@@ -1054,8 +1076,8 @@ export async function createAsanaTaskForConversation(
   // the AM can't be resolved (missing/unknown AM group), route to the
   // Geri/Martin/Allan column so the escalation stays visible and triageable
   // instead of silently landing in whatever the board's first column happens
-  // to be. Only the column is defaulted — the AM custom field and the assignee
-  // stay empty, so the ticket still reads as "no AM resolved".
+  // to be. Ownership within that column is handed to one of the trio further
+  // down (see effectiveAm).
   //
   // We deliberately do NOT blindly trust ASANA_SECTION_GID as the fallback:
   // Asana silently ignores an unknown section gid (rather than erroring), so a
@@ -1078,13 +1100,27 @@ export async function createAsanaTaskForConversation(
     }
   }
 
+  // Owner used for the AM field and the assignee. Normally the player's own
+  // AM; when there isn't one, a deterministic pick from the Geri/Martin/Allan
+  // trio who own that column, so the ticket lands with a named person instead
+  // of unclaimed. The board column is decided above and is unaffected.
+  const effectiveAm = input.accountManager?.trim()
+    ? input.accountManager
+    : pickUnresolvedAmOwner(input.conversationId);
+  if (effectiveAm !== input.accountManager) {
+    console.log(
+      `[asana] no account manager for conversation=${input.conversationId}; ` +
+      `assigning to ${effectiveAm} in the ${UNRESOLVED_AM_SECTION_NAME} column`,
+    );
+  }
+
   // AM custom-field option (kept as a redundant filter axis alongside the AM
   // column so the same field can be used in other Asana views). Resolved
   // against the configured ASANA_AM_FIELD_GID; auto-creates a new option if
   // an unseen AM appears (e.g. a freshly added VIP_<name> group). Best-effort
   // — a null result just means the field is unconfigured or transiently
   // unavailable; the ticket is still created.
-  const amOptionGid = await ensureAmEnumOption(input.accountManager);
+  const amOptionGid = await ensureAmEnumOption(effectiveAm);
   const amFieldGid = process.env.ASANA_AM_FIELD_GID;
   const customFields: Record<string, string> = {};
   if (amFieldGid && amOptionGid) {
@@ -1117,9 +1153,9 @@ export async function createAsanaTaskForConversation(
   const amAssigneeDisabled = process.env.ASANA_DISABLE_AM_ASSIGNEE === 'true';
   const assigneeGid = amAssigneeDisabled
     ? null
-    : await resolveAssigneeForAm(input.accountManager);
-  if (!amAssigneeDisabled && !assigneeGid && input.accountManager) {
-    console.warn(`[asana] could not resolve assignee for account manager: ${input.accountManager}`);
+    : await resolveAssigneeForAm(effectiveAm);
+  if (!amAssigneeDisabled && !assigneeGid) {
+    console.warn(`[asana] could not resolve assignee for account manager: ${effectiveAm}`);
   }
 
   // Three-step creation so the ticket NEVER passes through the board's first
