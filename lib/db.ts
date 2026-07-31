@@ -1166,6 +1166,88 @@ export async function dbListAllAsanaTickets(): Promise<
   return out;
 }
 
+// Rows the AM re-derive sweep works on: tickets that are still OPEN (so we
+// never touch closed history) plus the fields needed to re-resolve ownership —
+// the Intercom contact id to re-read groups from, the stored AM to diff
+// against, and the conversation-level tags. Those conv tags are one of
+// amFromGroups' four inputs but belong to the chat rather than the player, so
+// they're read from here instead of being re-fetched from Intercom.
+export interface OpenTicketForAmRederive {
+  id: string;
+  asana_task_gid: string;
+  player_id: string | null;
+  player_name: string | null;
+  account_manager: string | null;
+  tags: string[];
+}
+
+export async function dbListOpenTicketsForAmRederive(): Promise<OpenTicketForAmRederive[]> {
+  const PAGE = 1000;
+  const out: OpenTicketForAmRederive[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('conversations')
+      .select('id, asana_task_gid, player_id, player_name, account_manager, tags')
+      .not('asana_task_gid', 'is', null)
+      .is('asana_task_deleted_at', null)
+      .is('asana_completed_at', null)
+      // Stable order required for range pagination — see dbListAllAsanaTickets.
+      .order('id', { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) throw new Error(`[db] list open tickets for AM re-derive: ${error.message}`);
+    const rows = (data ?? []) as Array<Omit<OpenTicketForAmRederive, 'asana_task_gid' | 'tags'> & {
+      asana_task_gid: string | null;
+      tags: string[] | null;
+    }>;
+    for (const r of rows) {
+      if (!r.asana_task_gid) continue;
+      out.push({
+        id: r.id,
+        asana_task_gid: r.asana_task_gid,
+        player_id: r.player_id,
+        player_name: r.player_name,
+        account_manager: r.account_manager,
+        tags: r.tags ?? [],
+      });
+    }
+    if (rows.length < PAGE) break;
+    from += PAGE;
+  }
+  return out;
+}
+
+// Chunked + per-row resilient for the same reasons as dbBatchUpdateAsanaStatus:
+// one row's transient timeout must not roll back or abort the rest of the sweep.
+// The write is idempotent, so anything that fails is retried next tick.
+export async function dbBatchUpdateAccountManager(
+  updates: Array<{ id: string; accountManager: string }>,
+): Promise<{ updated: number; failed: number }> {
+  if (updates.length === 0) return { updated: 0, failed: 0 };
+  const CHUNK = 50;
+  let updated = 0;
+  let failed = 0;
+  for (let i = 0; i < updates.length; i += CHUNK) {
+    const results = await Promise.allSettled(
+      updates.slice(i, i + CHUNK).map(async ({ id, accountManager }) => {
+        const { error } = await supabase
+          .from('conversations')
+          .update({ account_manager: accountManager })
+          .eq('id', id);
+        if (error) throw new Error(`update account_manager (${id}): ${error.message}`);
+      }),
+    );
+    for (const r of results) {
+      if (r.status === 'fulfilled') updated += 1;
+      else {
+        failed += 1;
+        console.error(`[db] ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`);
+      }
+    }
+  }
+  return { updated, failed };
+}
+
 // Pulls every ticketed row in one paginated sweep and pivots in JS — same
 // pattern the dashboard uses for severity/category since those values live
 // inside the summary JSON. Returns the slim shape the reporting page needs;

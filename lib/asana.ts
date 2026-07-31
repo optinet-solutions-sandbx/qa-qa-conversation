@@ -1258,3 +1258,125 @@ export async function createAsanaTaskForConversation(
     return null;
   }
 }
+
+// ── Re-routing existing tickets when a player changes portfolio ─────────────
+// player_tags is snapshotted at collection time, so a ticket keeps whichever AM
+// was correct when the chat was collected. If ops re-tag the player in Intercom
+// afterwards, the ticket would otherwise sit with the old AM forever —
+// /api/backfill-am only fills rows where account_manager IS NULL, so it never
+// corrects a stale non-null name. Measured 2026-07-31: 11 of 88 open tickets
+// had drifted. Val asked for tickets to follow the player, so the status sync
+// re-derives the AM every tick (see reconcileAccountManagers) and calls these.
+
+export interface AsanaRerouteResult {
+  ok: boolean;
+  owner: string | null; // who the ticket ended up with (may be a trio member)
+}
+
+// Moves an existing task into the AM's column and re-stamps the AM field +
+// assignee. Deliberately mirrors createAsanaTaskForConversation's ownership
+// rules so a re-routed ticket is indistinguishable from one created fresh with
+// the new AM: the joint "Geri/Martin/Allan" name (and a missing AM) is spread
+// across the trio via the same stable conversation-id hash, and
+// ASANA_DISABLE_AM_ASSIGNEE still suppresses the assignee write.
+//
+// Case Status / Severity / Category / Issue are left untouched — this only
+// changes ownership, not triage state.
+export async function rerouteAsanaTaskToAm(
+  taskGid: string,
+  amName: string,
+  conversationId: string,
+): Promise<AsanaRerouteResult> {
+  if (!isAsanaConfigured()) return { ok: false, owner: null };
+  const token = process.env.ASANA_ACCESS_TOKEN!;
+  const authHeaders = {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+    Authorization: `Bearer ${token}`,
+  };
+
+  const trimmedAm = amName.trim();
+  if (!trimmedAm) return { ok: false, owner: null };
+
+  const spreadAcrossTrio = isAmTrio(trimmedAm);
+  const effectiveAm = spreadAcrossTrio ? pickTrioOwner(conversationId) : trimmedAm;
+
+  try {
+    // Column first, so the task is already in the right place before the AM is
+    // notified by the assignee write below.
+    const sectionGid = await ensureSectionForAccountManager(trimmedAm);
+    if (sectionGid) {
+      const moveRes = await fetch(`${ASANA_API}/sections/${sectionGid}/addTask`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ data: { task: taskGid } }),
+      });
+      if (!moveRes.ok) {
+        const body = await moveRes.text().catch(() => '');
+        console.error(`[asana] reroute move ${taskGid} -> ${trimmedAm} failed (${moveRes.status}): ${body.slice(0, 200)}`);
+        return { ok: false, owner: null };
+      }
+    } else {
+      console.warn(`[asana] reroute ${taskGid}: no column for "${trimmedAm}"; leaving it where it is`);
+    }
+
+    const amAssigneeDisabled = process.env.ASANA_DISABLE_AM_ASSIGNEE === 'true';
+    const [amOptionGid, assigneeGid] = await Promise.all([
+      ensureAmEnumOption(effectiveAm),
+      amAssigneeDisabled ? Promise.resolve(null) : resolveAssigneeForAm(effectiveAm),
+    ]);
+
+    const updateData: Record<string, unknown> = {};
+    const amFieldGid = process.env.ASANA_AM_FIELD_GID;
+    if (amFieldGid && amOptionGid) updateData.custom_fields = { [amFieldGid]: amOptionGid };
+    if (assigneeGid) updateData.assignee = assigneeGid;
+
+    if (Object.keys(updateData).length > 0) {
+      const upRes = await fetch(`${ASANA_API}/tasks/${taskGid}`, {
+        method: 'PUT', headers: authHeaders, body: JSON.stringify({ data: updateData }),
+      });
+      if (!upRes.ok) {
+        const body = await upRes.text().catch(() => '');
+        // The move already landed, so report failure but don't pretend nothing
+        // happened — the next tick re-runs this idempotently.
+        console.error(`[asana] reroute fields/assignee ${taskGid} failed (${upRes.status}): ${body.slice(0, 200)}`);
+        return { ok: false, owner: effectiveAm };
+      }
+    }
+    return { ok: true, owner: effectiveAm };
+  } catch (e) {
+    console.error(`[asana] reroute ${taskGid} exception:`, (e as Error).message);
+    return { ok: false, owner: null };
+  }
+}
+
+// Completes a task and stamps Case Status = "No Action Needed". Used when a
+// player drifts INTO SoftSwiss: those players never escalate (see the gate in
+// maybeCreateAsanaTicketForConversation) and there is deliberately no SoftSwiss
+// column, so the ticket should not have existed — closing it is the correct
+// resolution, not a move. Case Status uses autoCreate=false like everywhere
+// else, so a renamed option skips the field rather than polluting the project.
+export async function closeAsanaTaskAsNoActionNeeded(taskGid: string): Promise<boolean> {
+  if (!isAsanaConfigured()) return false;
+  const token = process.env.ASANA_ACCESS_TOKEN!;
+  try {
+    const caseStatus = await resolveProjectEnum('Case Status', 'No Action Needed', false);
+    const data: Record<string, unknown> = { completed: true };
+    if (caseStatus) data.custom_fields = { [caseStatus.fieldGid]: caseStatus.optionGid };
+
+    const res = await fetch(`${ASANA_API}/tasks/${taskGid}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ data }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error(`[asana] close ${taskGid} failed (${res.status}): ${body.slice(0, 200)}`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error(`[asana] close ${taskGid} exception:`, (e as Error).message);
+    return false;
+  }
+}

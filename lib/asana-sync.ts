@@ -1,8 +1,17 @@
 import {
   dbListAllAsanaTickets,
   dbBatchUpdateAsanaStatus,
+  dbListOpenTicketsForAmRederive,
+  dbBatchUpdateAccountManager,
 } from '@/lib/db';
-import { fetchOpenProjectTasks, fetchTasksCompletion } from '@/lib/asana';
+import {
+  fetchOpenProjectTasks,
+  fetchTasksCompletion,
+  rerouteAsanaTaskToAm,
+  closeAsanaTaskAsNoActionNeeded,
+} from '@/lib/asana';
+import { fetchLiveContactGroups } from '@/lib/intercom';
+import { amFromGroups } from '@/lib/utils';
 
 // Shared body for both /api/cron/sync-asana-statuses and the admin manual
 // trigger, so the two can't drift. Reconciles each ticketed conversation's
@@ -106,5 +115,146 @@ export async function reconcileAsanaStatuses(): Promise<AsanaSyncResult> {
     `[asana-sync] total=${result.total} open=${result.open} reopened=${reopened} ` +
       `completed=${completed} deleted=${deleted} deferred=${deferred} failed=${failed}`,
   );
+  return result;
+}
+
+// ── AM re-derive sweep ──────────────────────────────────────────────────────
+// player_tags is snapshotted when a chat is collected, so a ticket keeps the AM
+// that was correct at that moment. Ops re-tag players between portfolios in
+// Intercom all the time, and nothing corrected that afterwards: /api/backfill-am
+// only fills rows where account_manager IS NULL. Measured 2026-07-31, 11 of 88
+// open tickets had drifted — one player (Lucky Vibe / Kuwait) moved
+// non-vip_koko -> non-vip_esam -> softswiss inside ten hours.
+//
+// Val asked on 2026-07-31 for tickets to follow the player, so this re-reads
+// live Intercom groups for every OPEN ticket each tick and reconciles ownership.
+// Two outcomes:
+//   • drifted to a real AM  -> move column, re-stamp AM field + assignee, and
+//     update the stored account_manager so the dashboard agrees with the board.
+//   • drifted to SoftSwiss  -> close as "No Action Needed". SoftSwiss players
+//     never escalate and there is deliberately no SoftSwiss column, so the
+//     ticket should not exist. The stored account_manager is deliberately left
+//     alone here: rewriting it would retroactively move the ticket out of the
+//     previous AM's historical numbers, and the row is about to be marked
+//     completed anyway.
+//
+// Closed tickets are never touched — dbListOpenTicketsForAmRederive filters to
+// asana_completed_at IS NULL, so history stays immutable.
+
+// Bounded so the sweep can't outgrow the cron's maxDuration. Each ticket costs
+// three Intercom sub-resource GETs, run at RE_DERIVE_CONCURRENCY at a time.
+// Steady state the open board is well under this; anything past the cap is
+// logged and picked up next tick rather than silently skipped.
+const RE_DERIVE_CAP = 400;
+const RE_DERIVE_CONCURRENCY = 5;
+
+export interface AmRederiveResult {
+  considered: number;   // open tickets examined
+  skippedNoPlayer: number; // no Intercom contact id on the row
+  noLiveData: number;   // Intercom lookup failed or contact has no tags
+  unchanged: number;    // live AM matches what we stored
+  rerouted: number;     // moved to a different AM
+  closed: number;       // closed because the player is now SoftSwiss
+  failed: number;       // Asana write failed; retried next tick
+  deferred: number;     // beyond RE_DERIVE_CAP, left for next tick
+  dbFailed: number;     // account_manager write failed; retried next tick
+  changes: Array<{ player: string | null; from: string | null; to: string; owner: string | null; action: 'reroute' | 'close' }>;
+}
+
+// Small bounded-concurrency map — avoids firing 400 concurrent Intercom reads
+// (which would trip rate limiting) while still finishing well inside the tick.
+async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (true) {
+        const i = next++;
+        if (i >= items.length) return;
+        out[i] = await fn(items[i]);
+      }
+    }),
+  );
+  return out;
+}
+
+export async function reconcileAccountManagers(
+  opts: { dryRun?: boolean } = {},
+): Promise<AmRederiveResult> {
+  const dryRun = opts.dryRun === true;
+  const empty: AmRederiveResult = {
+    considered: 0, skippedNoPlayer: 0, noLiveData: 0, unchanged: 0, rerouted: 0,
+    closed: 0, failed: 0, deferred: 0, dbFailed: 0, changes: [],
+  };
+  if (!process.env.INTERCOM_API_KEY) {
+    console.warn('[am-rederive] INTERCOM_API_KEY unset; skipping');
+    return empty;
+  }
+
+  const all = await dbListOpenTicketsForAmRederive();
+  const tickets = all.slice(0, RE_DERIVE_CAP);
+  const deferred = all.length - tickets.length;
+  if (deferred > 0) {
+    console.warn(`[am-rederive] ${all.length} open tickets exceeds cap ${RE_DERIVE_CAP}; deferring ${deferred} to next tick`);
+  }
+  if (tickets.length === 0) return { ...empty, deferred };
+
+  let skippedNoPlayer = 0;
+  const resolved = await mapLimit(tickets, RE_DERIVE_CONCURRENCY, async (t) => {
+    if (!t.player_id) { skippedNoPlayer += 1; return null; }
+    const liveGroups = await fetchLiveContactGroups(t.player_id);
+    if (!liveGroups) return { t, live: null as string | null, noData: true };
+    // Same four inputs as collection time; conv tags come from the stored row.
+    const live = amFromGroups([...liveGroups, ...t.tags]);
+    return { t, live, noData: false };
+  });
+
+  let noLiveData = 0, unchanged = 0, rerouted = 0, closed = 0, failed = 0;
+  const changes: AmRederiveResult['changes'] = [];
+  const dbUpdates: Array<{ id: string; accountManager: string }> = [];
+
+  for (const r of resolved) {
+    if (!r) continue;
+    if (r.noData) { noLiveData += 1; continue; }
+    const stored = (r.t.account_manager ?? '').trim() || null;
+    // A null live result means no group resolved at all — no basis to change
+    // anything, so leave the ticket with whoever has it.
+    if (!r.live || r.live === stored) { unchanged += 1; continue; }
+
+    const action = r.live === 'SoftSwiss' ? 'close' : 'reroute';
+    if (dryRun) {
+      changes.push({ player: r.t.player_name, from: stored, to: r.live, owner: null, action });
+      if (action === 'close') closed += 1; else rerouted += 1;
+      continue;
+    }
+
+    if (action === 'close') {
+      const ok = await closeAsanaTaskAsNoActionNeeded(r.t.asana_task_gid);
+      if (!ok) { failed += 1; continue; }
+      closed += 1;
+      changes.push({ player: r.t.player_name, from: stored, to: r.live, owner: null, action });
+    } else {
+      const res = await rerouteAsanaTaskToAm(r.t.asana_task_gid, r.live, r.t.id);
+      if (!res.ok) { failed += 1; continue; }
+      rerouted += 1;
+      dbUpdates.push({ id: r.t.id, accountManager: r.live });
+      changes.push({ player: r.t.player_name, from: stored, to: r.live, owner: res.owner, action });
+    }
+  }
+
+  const { failed: dbFailed } = dryRun ? { failed: 0 } : await dbBatchUpdateAccountManager(dbUpdates);
+
+  const result: AmRederiveResult = {
+    considered: tickets.length, skippedNoPlayer, noLiveData, unchanged,
+    rerouted, closed, failed, deferred, dbFailed, changes,
+  };
+  console.log(
+    `[am-rederive]${dryRun ? ' DRY-RUN' : ''} considered=${result.considered} unchanged=${unchanged} ` +
+      `rerouted=${rerouted} closed=${closed} noLiveData=${noLiveData} noPlayer=${skippedNoPlayer} ` +
+      `failed=${failed} dbFailed=${dbFailed} deferred=${deferred}`,
+  );
+  for (const c of changes) {
+    console.log(`[am-rederive]   ${c.action} ${c.player ?? '?'}: ${c.from ?? '(none)'} -> ${c.to}${c.owner && c.owner !== c.to ? ` (owner ${c.owner})` : ''}`);
+  }
   return result;
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { isAsanaConfigured } from '@/lib/asana';
-import { reconcileAsanaStatuses } from '@/lib/asana-sync';
+import { reconcileAsanaStatuses, reconcileAccountManagers } from '@/lib/asana-sync';
 
 // Manual trigger for the Asana status sync — same reconcileAsanaStatuses() the
 // */15 cron runs, so they can't drift. Reconciles asana_completed_at /
@@ -31,9 +31,19 @@ export async function GET(req: NextRequest) {
     );
   }
 
+  // Query flags:
+  //   ?amOnly=1   run only the AM re-derive pass (skip the status reconcile)
+  //   ?dryRun=1   report what the AM pass WOULD change without writing to Asana
+  //               or Supabase — use this before a first run on a busy board.
+  const params = new URL(req.url).searchParams;
+  const dryRun = params.get('dryRun') === '1' || params.get('dryRun') === 'true';
+  const amOnly = params.get('amOnly') === '1' || params.get('amOnly') === 'true';
+
   try {
-    const result = await reconcileAsanaStatuses();
-    return NextResponse.json(result);
+    const accountManagers = await reconcileAccountManagers({ dryRun });
+    if (amOnly || dryRun) return NextResponse.json({ dryRun, accountManagers });
+    const statuses = await reconcileAsanaStatuses();
+    return NextResponse.json({ accountManagers, statuses });
   } catch (e) {
     return NextResponse.json({ error: (e as Error).message }, { status: 502 });
   }

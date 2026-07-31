@@ -89,6 +89,52 @@ export function stripHtml(html: string): string {
   return (html || '').replace(/<[^>]*>?/gm, '').trim();
 }
 
+// Re-reads the group signals that amFromGroups cares about for a contact, LIVE
+// from Intercom rather than from the collection-time snapshot in player_tags.
+// Used by the AM re-derive sweep to notice when ops move a player between
+// portfolios after their ticket was raised.
+//
+// Fetches the same three contact sub-resources fetchIntercomData does (tags,
+// companies, segments) so the live answer can't disagree with what collection
+// would have derived. Conversation-level tags are the fourth input at
+// collection time, but those belong to the chat and never change with the
+// player's portfolio, so the caller passes its stored copy instead of us
+// re-fetching the conversation.
+//
+// Returns null — never [] — when the lookup fails or the contact has no tags at
+// all, so callers can tell "no data, leave the ticket alone" apart from
+// "genuinely no groups". Clearing a good AM on a transient 500 would be worse
+// than doing nothing.
+export async function fetchLiveContactGroups(contactId: string): Promise<string[] | null> {
+  const apiKey = process.env.INTERCOM_API_KEY;
+  if (!apiKey || !contactId) return null;
+  const headers = intercomHeaders(apiKey);
+
+  const [tagsRes, companiesRes, segmentsRes] = await Promise.allSettled([
+    fetchWithRateLimit(`https://api.intercom.io/contacts/${contactId}/tags`, { headers }),
+    fetchWithRateLimit(`https://api.intercom.io/contacts/${contactId}/companies`, { headers }),
+    fetchWithRateLimit(`https://api.intercom.io/contacts/${contactId}/segments`, { headers }),
+  ]);
+
+  // Tags carry the "group: VIP_<am>" / "group: softswiss" memberships, so a tag
+  // failure means we have no basis to re-derive anything. Companies/segments are
+  // best-effort on top.
+  if (tagsRes.status !== 'fulfilled' || !tagsRes.value.ok) return null;
+  const tags = await safeJson<{ data?: Array<{ name?: string }> }>(tagsRes.value);
+  const names = (tags?.data ?? []).map((t) => t.name ?? '').filter(Boolean);
+  if (names.length === 0) return null;
+
+  if (companiesRes.status === 'fulfilled' && companiesRes.value.ok) {
+    const c = await safeJson<{ data?: Array<{ name?: string }> }>(companiesRes.value);
+    names.push(...(c?.data ?? []).map((x) => x.name ?? '').filter(Boolean));
+  }
+  if (segmentsRes.status === 'fulfilled' && segmentsRes.value.ok) {
+    const s = await safeJson<{ data?: Array<{ name?: string }> }>(segmentsRes.value);
+    names.push(...(s?.data ?? []).map((x) => x.name ?? '').filter(Boolean));
+  }
+  return names;
+}
+
 // Single source of truth for the speaker label sent to the QA model.
 // Keep in sync with the parser in components/conversations/ConversationDetail.tsx.
 export function authorTypeToLabel(authorType: string | null | undefined): 'Agent' | 'Bot' | 'Player' {
