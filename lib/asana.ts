@@ -330,26 +330,42 @@ async function getProjectSections(): Promise<Map<string, string>> {
 // as AM columns, so it is auto-created if the column is ever renamed away.
 const UNRESOLVED_AM_SECTION_NAME = 'Geri/Martin/Allan';
 
-// The three people behind that column. A no-AM escalation is handed to one of
-// them (AM field + assignee) so it has a real owner instead of sitting
-// unclaimed — Val asked for these to be "randomised" across the trio
-// (2026-07-30). The ticket still goes to the shared Geri/Martin/Allan column;
-// only the ownership is spread.
+// The three people behind that column. Tickets owned by the trio are handed to
+// ONE of them (AM field + assignee) instead of the joint name, so the load is
+// spread rather than piling on whoever the name lookup happens to match first.
+// Val asked for this on 2026-07-30, first for no-AM tickets and then — after we
+// found every joint-AM ticket was landing on Geri Andonova, because
+// resolveAssigneeForAm token-matches "geri" before the other two — for the
+// regular joint-AM stream as well. Two cases get a pick:
+//
+//   1. no account manager at all (the fallback column above), and
+//   2. account manager === the joint "Geri/Martin/Allan" name, which is what
+//      GROUP_TO_AM returns for the NON-VIP Ada / Nik / Koko portfolios.
+//
+// Both still go to the shared Geri/Martin/Allan column — only the ownership
+// inside it is spread. Individual "Geri" / "Martin" / "Allan" options are
+// auto-created on the AM enum field the first time each is used.
 //
 // The pick is a hash of the conversation id rather than Math.random() so it is
 // stable: a retried or re-analysed conversation always resolves to the same
 // person instead of flip-flopping between runs. Conversation ids are uuids, so
 // the distribution across tickets is even.
-const UNRESOLVED_AM_OWNERS = ['Geri', 'Martin', 'Allan'] as const;
+const AM_TRIO_OWNERS = ['Geri', 'Martin', 'Allan'] as const;
 
-function pickUnresolvedAmOwner(conversationId: string): string {
+// Whitespace-insensitive match against the joint AM name, so "Geri/Martin/Allan"
+// and "Geri / Martin / Allan" both count.
+function isAmTrio(amName: string): boolean {
+  return amName.replace(/\s+/g, '').toLowerCase() === UNRESOLVED_AM_SECTION_NAME.toLowerCase();
+}
+
+function pickTrioOwner(conversationId: string): string {
   // FNV-1a — short, dependency-free, and well distributed over uuid strings.
   let h = 2166136261;
   for (let i = 0; i < conversationId.length; i++) {
     h ^= conversationId.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
-  return UNRESOLVED_AM_OWNERS[(h >>> 0) % UNRESOLVED_AM_OWNERS.length];
+  return AM_TRIO_OWNERS[(h >>> 0) % AM_TRIO_OWNERS.length];
 }
 
 // True if the given section gid is still a live section in the project. Used to
@@ -1100,17 +1116,18 @@ export async function createAsanaTaskForConversation(
     }
   }
 
-  // Owner used for the AM field and the assignee. Normally the player's own
-  // AM; when there isn't one, a deterministic pick from the Geri/Martin/Allan
-  // trio who own that column, so the ticket lands with a named person instead
-  // of unclaimed. The board column is decided above and is unaffected.
-  const effectiveAm = input.accountManager?.trim()
-    ? input.accountManager
-    : pickUnresolvedAmOwner(input.conversationId);
-  if (effectiveAm !== input.accountManager) {
+  // Owner used for the AM field and the assignee. Normally the player's own AM,
+  // except for the two Geri/Martin/Allan cases (no AM at all, or the joint AM
+  // name), which get a deterministic pick from the trio so the load is spread.
+  // The board column is decided above and is unaffected either way.
+  const trimmedAm = input.accountManager?.trim() ?? '';
+  const spreadAcrossTrio = !trimmedAm || isAmTrio(trimmedAm);
+  const effectiveAm = spreadAcrossTrio ? pickTrioOwner(input.conversationId) : trimmedAm;
+  if (spreadAcrossTrio) {
     console.log(
-      `[asana] no account manager for conversation=${input.conversationId}; ` +
-      `assigning to ${effectiveAm} in the ${UNRESOLVED_AM_SECTION_NAME} column`,
+      `[asana] ${trimmedAm ? `joint AM "${trimmedAm}"` : 'no account manager'} ` +
+      `for conversation=${input.conversationId}; assigning to ${effectiveAm} ` +
+      `in the ${UNRESOLVED_AM_SECTION_NAME} column`,
     );
   }
 
