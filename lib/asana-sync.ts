@@ -7,8 +7,12 @@ import {
 import {
   fetchOpenProjectTasks,
   fetchTasksCompletion,
+  fetchTrioColumnTasks,
   rerouteAsanaTaskToAm,
   closeAsanaTaskAsNoActionNeeded,
+  setAsanaTaskAmField,
+  tallyTrioLoad,
+  trioMemberFromAssigneeName,
 } from '@/lib/asana';
 import { fetchLiveContactGroups } from '@/lib/intercom';
 import { amFromGroups } from '@/lib/utils';
@@ -255,6 +259,74 @@ export async function reconcileAccountManagers(
   );
   for (const c of changes) {
     console.log(`[am-rederive]   ${c.action} ${c.player ?? '?'}: ${c.from ?? '(none)'} -> ${c.to}${c.owner && c.owner !== c.to ? ` (owner ${c.owner})` : ''}`);
+  }
+  return result;
+}
+
+// ── Trio owner sweep ────────────────────────────────────────────────────────
+// The Geri/Martin/Allan column is shared by three people who hand tickets to
+// each other by hand on the board (measured 2026-08-13: 4 of the 16 open cards
+// had been passed on the previous day). Nothing reconciled that — the Account
+// Manager field kept naming whoever the ticket was created for — so the board
+// misreported the owner, which is a large part of why the column looked like it
+// was all going to one person.
+//
+// This pass copies the assignee into the AM field. The assignee is never
+// rewritten: a person moved that deliberately and their choice wins. It also
+// keeps the least-loaded pick honest, since pickTrioOwner counts open tickets by
+// assignee — after this runs, the field and the count agree.
+//
+// Tasks with no assignee, or an assignee outside the trio, are left untouched:
+// there is nothing to copy, and guessing would undo a deliberate hand-off.
+export interface TrioOwnerSyncResult {
+  considered: number;  // open tasks in the trio column
+  restamped: number;   // AM field brought in line with the assignee
+  aligned: number;     // field already matched
+  skipped: number;     // unassigned, or assignee outside the trio
+  failed: number;      // Asana write failed; retried next tick
+  // Open tickets each of the three is holding right now — the same count
+  // pickTrioOwner balances on, so this is the number to quote when someone asks
+  // whether the column is spread evenly.
+  load: Record<string, number>;
+  changes: Array<{ task: string; from: string | null; to: string }>;
+}
+
+export async function reconcileTrioOwners(
+  opts: { dryRun?: boolean } = {},
+): Promise<TrioOwnerSyncResult> {
+  const dryRun = opts.dryRun === true;
+  const result: TrioOwnerSyncResult = {
+    considered: 0, restamped: 0, aligned: 0, skipped: 0, failed: 0, load: {}, changes: [],
+  };
+
+  const tasks = await fetchTrioColumnTasks();
+  if (!tasks) {
+    console.warn('[trio-sync] could not read the trio column; leaving ownership alone this tick');
+    return result;
+  }
+  result.considered = tasks.length;
+  result.load = Object.fromEntries(tallyTrioLoad(tasks));
+
+  for (const t of tasks) {
+    const owner = trioMemberFromAssigneeName(t.assignee);
+    if (!owner) { result.skipped += 1; continue; }
+    if (t.amOption === owner) { result.aligned += 1; continue; }
+
+    if (!dryRun) {
+      const ok = await setAsanaTaskAmField(t.gid, owner);
+      if (!ok) { result.failed += 1; continue; }
+    }
+    result.restamped += 1;
+    result.changes.push({ task: t.gid, from: t.amOption, to: owner });
+  }
+
+  console.log(
+    `[trio-sync]${dryRun ? ' DRY-RUN' : ''} considered=${result.considered} ` +
+      `restamped=${result.restamped} aligned=${result.aligned} skipped=${result.skipped} failed=${result.failed} ` +
+      `load=${Object.entries(result.load).map(([o, n]) => `${o}:${n}`).join(' ')}`,
+  );
+  for (const c of result.changes) {
+    console.log(`[trio-sync]   task ${c.task}: AM ${c.from ?? '(unset)'} -> ${c.to}`);
   }
   return result;
 }

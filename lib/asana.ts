@@ -345,27 +345,108 @@ const UNRESOLVED_AM_SECTION_NAME = 'Geri/Martin/Allan';
 // Both still go to the shared Geri/Martin/Allan column — only the ownership
 // inside it is spread. Individual "Geri" / "Martin" / "Allan" options are
 // auto-created on the AM enum field the first time each is used.
-//
-// The pick is a hash of the conversation id rather than Math.random() so it is
-// stable: a retried or re-analysed conversation always resolves to the same
-// person instead of flip-flopping between runs. Conversation ids are uuids, so
-// the distribution across tickets is even.
 const AM_TRIO_OWNERS = ['Geri', 'Martin', 'Allan'] as const;
+export type TrioOwner = typeof AM_TRIO_OWNERS[number];
 
 // Whitespace-insensitive match against the joint AM name, so "Geri/Martin/Allan"
-// and "Geri / Martin / Allan" both count.
+// and "Geri / Martin / Allan" both count. Also used on the board column's name,
+// which is deliberately the same string (UNRESOLVED_AM_SECTION_NAME).
 function isAmTrio(amName: string): boolean {
   return amName.replace(/\s+/g, '').toLowerCase() === UNRESOLVED_AM_SECTION_NAME.toLowerCase();
 }
 
-function pickTrioOwner(conversationId: string): string {
-  // FNV-1a — short, dependency-free, and well distributed over uuid strings.
+// Maps an Asana user's display name back to the trio member it belongs to
+// ("Allan Lauchengco" -> "Allan"), the mirror of the first-name convention
+// resolveAssigneeForAm uses in the other direction. Null for anyone else, so a
+// ticket handed to someone outside the trio is left alone rather than guessed at.
+export function trioMemberFromAssigneeName(name: string | null): TrioOwner | null {
+  if (!name) return null;
+  const first = name.trim().toLowerCase().split(/\s+/)[0];
+  return AM_TRIO_OWNERS.find((o) => o.toLowerCase() === first) ?? null;
+}
+
+// Tie-break / fallback pick: FNV-1a over the conversation id. This was the whole
+// selection rule until 2026-08-13 and is even in aggregate (measured over 365
+// joint-AM tickets: 105/136/124), but being stateless it can't see who is
+// already busy — the open board sat at 8/6/2, which reads as one person getting
+// everything. Kept because it is deterministic: a retried conversation resolves
+// the same way, and it breaks ties without favouring the first name in the list.
+function hashTrioOwner(conversationId: string): TrioOwner {
   let h = 2166136261;
   for (let i = 0; i < conversationId.length; i++) {
     h ^= conversationId.charCodeAt(i);
     h = Math.imul(h, 16777619);
   }
   return AM_TRIO_OWNERS[(h >>> 0) % AM_TRIO_OWNERS.length];
+}
+
+// Live open-ticket load per trio member, counted from the board by ASSIGNEE so
+// a ticket one of them hands to a teammate counts against whoever actually
+// holds it (see reconcileTrioOwners in lib/asana-sync.ts).
+const TRIO_LOAD_TTL_MS = 60 * 1000;
+let trioLoadCache: { fetchedAt: number; counts: Map<TrioOwner, number> } | null = null;
+
+// Picks already made against the cached counts. One analysis run can escalate a
+// dozen conversations within seconds — faster than the board reflects them — so
+// without reserving each pick locally the whole batch would pile onto whoever
+// happened to be lightest when the batch started.
+const trioPendingPicks = new Map<TrioOwner, number>();
+
+// Open tickets per trio member, counted by assignee. Tasks held by anyone
+// outside the trio (or nobody) count against no one — they are not the trio's
+// workload. Shared with the trio sweep so its report and this pick can never
+// disagree about who is carrying what.
+export function tallyTrioLoad(tasks: TrioTask[]): Map<TrioOwner, number> {
+  const counts = new Map<TrioOwner, number>(AM_TRIO_OWNERS.map((o) => [o, 0] as [TrioOwner, number]));
+  for (const t of tasks) {
+    const member = trioMemberFromAssigneeName(t.assignee);
+    if (member) counts.set(member, (counts.get(member) ?? 0) + 1);
+  }
+  return counts;
+}
+
+async function getTrioOpenLoad(): Promise<Map<TrioOwner, number> | null> {
+  if (trioLoadCache && Date.now() - trioLoadCache.fetchedAt < TRIO_LOAD_TTL_MS) {
+    return trioLoadCache.counts;
+  }
+  const tasks = await fetchTrioColumnTasks();
+  // Transient read failure: prefer stale counts over none, and let the caller
+  // fall back to the hash if we have never managed a read.
+  if (!tasks) return trioLoadCache?.counts ?? null;
+
+  const counts = tallyTrioLoad(tasks);
+  trioLoadCache = { fetchedAt: Date.now(), counts };
+  // A fresh read already includes everything assigned before it.
+  trioPendingPicks.clear();
+  return counts;
+}
+
+// Hands the ticket to whichever trio member is carrying the fewest OPEN tickets
+// right now, so the live queue levels out instead of only evening out over
+// months. Val asked for this on 2026-08-13 after the column looked Geri-heavy.
+// Ties, an empty column, and an unreadable board all fall back to the stable id
+// hash, so a pick is always made and ticket creation never blocks on this.
+async function pickTrioOwner(conversationId: string): Promise<TrioOwner> {
+  const fallback = hashTrioOwner(conversationId);
+  let counts: Map<TrioOwner, number> | null = null;
+  try {
+    counts = await getTrioOpenLoad();
+  } catch (e) {
+    console.error('[asana] trio load read failed; using the id hash:', (e as Error).message);
+  }
+  if (!counts) return fallback;
+
+  const open = counts;
+  const load = (o: TrioOwner) => (open.get(o) ?? 0) + (trioPendingPicks.get(o) ?? 0);
+  let pick = fallback;
+  for (const o of AM_TRIO_OWNERS) {
+    if (load(o) < load(pick)) pick = o;
+  }
+  console.log(
+    `[asana] trio open load ${AM_TRIO_OWNERS.map((o) => `${o}=${load(o)}`).join(' ')} -> ${pick}`,
+  );
+  trioPendingPicks.set(pick, (trioPendingPicks.get(pick) ?? 0) + 1);
+  return pick;
 }
 
 // True if the given section gid is still a live section in the project. Used to
@@ -918,6 +999,106 @@ export async function fetchOpenProjectTasks(): Promise<OpenTask[]> {
   return out;
 }
 
+export type TrioTask = { gid: string; assignee: string | null; amOption: string | null };
+
+// Open tasks sitting in the Geri/Martin/Allan column, with who holds each one
+// and what its Account Manager field currently says. Same completed_since=now
+// trick as fetchOpenProjectTasks, so the cost tracks the live open set rather
+// than the project's history.
+//
+// Returns null on a transient API failure so callers can tell "the column is
+// empty" (spread from scratch, nothing to fix) apart from "we couldn't look"
+// (leave ownership alone this tick).
+export async function fetchTrioColumnTasks(): Promise<TrioTask[] | null> {
+  if (!isAsanaConfigured()) return null;
+  const token = process.env.ASANA_ACCESS_TOKEN!;
+  const projectGid = process.env.ASANA_PROJECT_GID!;
+  const amFieldGid = process.env.ASANA_AM_FIELD_GID ?? null;
+  const completedSince = new Date().toISOString();
+
+  const out: TrioTask[] = [];
+  let offset: string | null = null;
+  for (let page = 0; page < 100; page++) {
+    const params = new URLSearchParams({
+      limit: '100',
+      completed_since: completedSince,
+      opt_fields:
+        'assignee.name,memberships.project,memberships.section.name,custom_fields.gid,custom_fields.enum_value.name',
+    });
+    if (offset) params.set('offset', offset);
+    try {
+      const res = await fetch(`${ASANA_API}/projects/${projectGid}/tasks?${params.toString()}`, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        console.error(`[asana] list trio column tasks failed (${res.status}): ${body.slice(0, 300)}`);
+        return null;
+      }
+      const json = await res.json();
+      for (const t of (json?.data ?? []) as Array<{
+        gid?: string;
+        assignee?: { name?: string } | null;
+        memberships?: Array<{ project?: { gid?: string }; section?: { name?: string } | null }>;
+        custom_fields?: Array<{ gid?: string; enum_value?: { name?: string } | null }>;
+      }>) {
+        if (!t?.gid) continue;
+        const mine = (t.memberships ?? []).find((m) => m?.project?.gid === projectGid);
+        const section = mine?.section?.name ?? null;
+        if (!section || !isAmTrio(section)) continue;
+        const amField = amFieldGid
+          ? (t.custom_fields ?? []).find((c) => c?.gid === amFieldGid)
+          : undefined;
+        out.push({
+          gid: t.gid,
+          assignee: t.assignee?.name ?? null,
+          amOption: amField?.enum_value?.name ?? null,
+        });
+      }
+      offset = json?.next_page?.offset ?? null;
+      if (!offset) break;
+    } catch (e) {
+      console.error('[asana] list trio column tasks exception:', (e as Error).message);
+      return null;
+    }
+  }
+  return out;
+}
+
+// Stamps just the Account Manager field on an existing task. Used by the
+// trio-owner sweep to bring the field in line with whoever actually holds the
+// ticket. The assignee is deliberately NOT touched: a person moved it by hand,
+// and that choice wins over our bookkeeping.
+export async function setAsanaTaskAmField(taskGid: string, amName: string): Promise<boolean> {
+  if (!isAsanaConfigured()) return false;
+  const amFieldGid = process.env.ASANA_AM_FIELD_GID;
+  if (!amFieldGid) return false;
+  const optionGid = await ensureAmEnumOption(amName);
+  if (!optionGid) return false;
+
+  const token = process.env.ASANA_ACCESS_TOKEN!;
+  try {
+    const res = await fetch(`${ASANA_API}/tasks/${taskGid}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ data: { custom_fields: { [amFieldGid]: optionGid } } }),
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.error(`[asana] set AM field on ${taskGid} failed (${res.status}): ${body.slice(0, 200)}`);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error(`[asana] set AM field on ${taskGid} exception:`, (e as Error).message);
+    return false;
+  }
+}
+
 export type TaskCompletion =
   | { exists: false }
   | { exists: true; completed: boolean; completed_at: string | null };
@@ -1122,7 +1303,7 @@ export async function createAsanaTaskForConversation(
   // The board column is decided above and is unaffected either way.
   const trimmedAm = input.accountManager?.trim() ?? '';
   const spreadAcrossTrio = !trimmedAm || isAmTrio(trimmedAm);
-  const effectiveAm = spreadAcrossTrio ? pickTrioOwner(input.conversationId) : trimmedAm;
+  const effectiveAm = spreadAcrossTrio ? await pickTrioOwner(input.conversationId) : trimmedAm;
   if (spreadAcrossTrio) {
     console.log(
       `[asana] ${trimmedAm ? `joint AM "${trimmedAm}"` : 'no account manager'} ` +
@@ -1276,8 +1457,8 @@ export interface AsanaRerouteResult {
 // Moves an existing task into the AM's column and re-stamps the AM field +
 // assignee. Deliberately mirrors createAsanaTaskForConversation's ownership
 // rules so a re-routed ticket is indistinguishable from one created fresh with
-// the new AM: the joint "Geri/Martin/Allan" name (and a missing AM) is spread
-// across the trio via the same stable conversation-id hash, and
+// the new AM: the joint "Geri/Martin/Allan" name (and a missing AM) goes to the
+// least-loaded trio member via the same pickTrioOwner, and
 // ASANA_DISABLE_AM_ASSIGNEE still suppresses the assignee write.
 //
 // Case Status / Severity / Category / Issue are left untouched — this only
@@ -1299,7 +1480,7 @@ export async function rerouteAsanaTaskToAm(
   if (!trimmedAm) return { ok: false, owner: null };
 
   const spreadAcrossTrio = isAmTrio(trimmedAm);
-  const effectiveAm = spreadAcrossTrio ? pickTrioOwner(conversationId) : trimmedAm;
+  const effectiveAm = spreadAcrossTrio ? await pickTrioOwner(conversationId) : trimmedAm;
 
   try {
     // Column first, so the task is already in the right place before the AM is
