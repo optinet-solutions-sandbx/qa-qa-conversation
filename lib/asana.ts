@@ -365,12 +365,11 @@ export function trioMemberFromAssigneeName(name: string | null): TrioOwner | nul
   return AM_TRIO_OWNERS.find((o) => o.toLowerCase() === first) ?? null;
 }
 
-// Tie-break / fallback pick: FNV-1a over the conversation id. This was the whole
-// selection rule until 2026-08-13 and is even in aggregate (measured over 365
-// joint-AM tickets: 105/136/124), but being stateless it can't see who is
-// already busy — the open board sat at 8/6/2, which reads as one person getting
-// everything. Kept because it is deterministic: a retried conversation resolves
-// the same way, and it breaks ties without favouring the first name in the list.
+// Fallback pick: FNV-1a over the conversation id. This was the whole selection
+// rule until 2026-08-13 — even in aggregate (measured over 365 joint-AM tickets:
+// 105/136/124) but with no order to it, so any given day could look lopsided.
+// Kept only for when the rotation ledger is unreachable: it is deterministic, so
+// a retried conversation still resolves to the same person.
 function hashTrioOwner(conversationId: string): TrioOwner {
   let h = 2166136261;
   for (let i = 0; i < conversationId.length; i++) {
@@ -380,22 +379,10 @@ function hashTrioOwner(conversationId: string): TrioOwner {
   return AM_TRIO_OWNERS[(h >>> 0) % AM_TRIO_OWNERS.length];
 }
 
-// Live open-ticket load per trio member, counted from the board by ASSIGNEE so
-// a ticket one of them hands to a teammate counts against whoever actually
-// holds it (see reconcileTrioOwners in lib/asana-sync.ts).
-const TRIO_LOAD_TTL_MS = 60 * 1000;
-let trioLoadCache: { fetchedAt: number; counts: Map<TrioOwner, number> } | null = null;
-
-// Picks already made against the cached counts. One analysis run can escalate a
-// dozen conversations within seconds — faster than the board reflects them — so
-// without reserving each pick locally the whole batch would pile onto whoever
-// happened to be lightest when the batch started.
-const trioPendingPicks = new Map<TrioOwner, number>();
-
-// Open tickets per trio member, counted by assignee. Tasks held by anyone
-// outside the trio (or nobody) count against no one — they are not the trio's
-// workload. Shared with the trio sweep so its report and this pick can never
-// disagree about who is carrying what.
+// Open tickets per trio member, counted by ASSIGNEE so a ticket one of them
+// hands to a teammate counts against whoever actually holds it. This is NOT what
+// drives assignment (see pickTrioOwner) — it is what the trio sweep reports, and
+// the number to quote when someone asks who is holding what right now.
 export function tallyTrioLoad(tasks: TrioTask[]): Map<TrioOwner, number> {
   const counts = new Map<TrioOwner, number>(AM_TRIO_OWNERS.map((o) => [o, 0] as [TrioOwner, number]));
   for (const t of tasks) {
@@ -405,48 +392,52 @@ export function tallyTrioLoad(tasks: TrioTask[]): Map<TrioOwner, number> {
   return counts;
 }
 
-async function getTrioOpenLoad(): Promise<Map<TrioOwner, number> | null> {
-  if (trioLoadCache && Date.now() - trioLoadCache.fetchedAt < TRIO_LOAD_TTL_MS) {
-    return trioLoadCache.counts;
-  }
-  const tasks = await fetchTrioColumnTasks();
-  // Transient read failure: prefer stale counts over none, and let the caller
-  // fall back to the hash if we have never managed a read.
-  if (!tasks) return trioLoadCache?.counts ?? null;
-
-  const counts = tallyTrioLoad(tasks);
-  trioLoadCache = { fetchedAt: Date.now(), counts };
-  // A fresh read already includes everything assigned before it.
-  trioPendingPicks.clear();
-  return counts;
-}
-
-// Hands the ticket to whichever trio member is carrying the fewest OPEN tickets
-// right now, so the live queue levels out instead of only evening out over
-// months. Val asked for this on 2026-08-13 after the column looked Geri-heavy.
-// Ties, an empty column, and an unreadable board all fall back to the stable id
-// hash, so a pick is always made and ticket creation never blocks on this.
+// Strict rotation: 1 Geri, 1 Martin, 1 Allan, repeat. Val specified this on
+// 2026-08-13, rejecting a load-aware pick — the three of them work different
+// hours, so whoever is off shift accumulates open tickets, and giving new work to
+// whoever holds the least would quietly shift the stream onto whoever clears
+// fastest. An equal share of the stream is the requirement; who is currently
+// busy is deliberately not an input.
+//
+// The position comes from a Postgres bigserial (sql/trio_rotation.sql), claimed
+// once per conversation. That matters because escalations are created
+// concurrently — the batch-analysis flush fires Promise.all over a whole batch —
+// and an app-side counter would give every ticket in that batch the same slot,
+// recreating the lopsided distribution this replaced. The ledger is also
+// idempotent per conversation, so a retry re-uses its slot instead of consuming
+// another and skipping someone in the cycle.
+//
+// If the ledger can't be reached (e.g. the table doesn't exist yet), the pick
+// degrades to the id hash and ticket creation carries on.
 async function pickTrioOwner(conversationId: string): Promise<TrioOwner> {
-  const fallback = hashTrioOwner(conversationId);
-  let counts: Map<TrioOwner, number> | null = null;
+  let slot: number | null = null;
   try {
-    counts = await getTrioOpenLoad();
+    const { dbClaimTrioRotationSlot } = await import('@/lib/db');
+    slot = await dbClaimTrioRotationSlot(conversationId);
   } catch (e) {
-    console.error('[asana] trio load read failed; using the id hash:', (e as Error).message);
+    console.error('[asana] trio rotation ledger unreachable:', (e as Error).message);
   }
-  if (!counts) return fallback;
+  if (slot == null) {
+    const fallback = hashTrioOwner(conversationId);
+    console.warn(
+      `[asana] no rotation slot for conversation=${conversationId}; falling back to the id hash -> ${fallback}`,
+    );
+    return fallback;
+  }
 
-  const open = counts;
-  const load = (o: TrioOwner) => (open.get(o) ?? 0) + (trioPendingPicks.get(o) ?? 0);
-  let pick = fallback;
-  for (const o of AM_TRIO_OWNERS) {
-    if (load(o) < load(pick)) pick = o;
+  // seq is 1-based, so slot 1 -> Geri, 2 -> Martin, 3 -> Allan, 4 -> Geri...
+  const owner = AM_TRIO_OWNERS[(slot - 1) % AM_TRIO_OWNERS.length];
+  console.log(`[asana] trio rotation slot ${slot} -> ${owner} (conversation=${conversationId})`);
+
+  // Reporting only — the owner is always derivable from the slot, so this write
+  // failing costs a report row, not an assignment.
+  try {
+    const { dbRecordTrioRotationOwner } = await import('@/lib/db');
+    await dbRecordTrioRotationOwner(conversationId, owner);
+  } catch (e) {
+    console.error('[asana] could not record rotation owner:', (e as Error).message);
   }
-  console.log(
-    `[asana] trio open load ${AM_TRIO_OWNERS.map((o) => `${o}=${load(o)}`).join(' ')} -> ${pick}`,
-  );
-  trioPendingPicks.set(pick, (trioPendingPicks.get(pick) ?? 0) + 1);
-  return pick;
+  return owner;
 }
 
 // True if the given section gid is still a live section in the project. Used to

@@ -1248,6 +1248,84 @@ export async function dbBatchUpdateAccountManager(
   return { updated, failed };
 }
 
+// ── Geri/Martin/Allan rotation ledger (sql/trio_rotation.sql) ──────────────
+// Claims this conversation's slot in the strict rotation and returns it. The
+// slot number comes from a Postgres bigserial, so a batch of escalations
+// created concurrently (Promise.all in the batch-analysis flush) gets distinct
+// slots without any locking here — an app-side counter would hand them all the
+// same one.
+//
+// Idempotent: conversation_id is UNIQUE, so a retry resolves to the slot the
+// conversation already holds rather than consuming another and skipping someone
+// in the cycle.
+//
+// Returns null if the ledger can't be reached (most likely the table hasn't been
+// created yet). The caller falls back to the id hash — never blocks a ticket.
+export async function dbClaimTrioRotationSlot(conversationId: string): Promise<number | null> {
+  const existing = await supabase
+    .from('trio_rotation')
+    .select('seq')
+    .eq('conversation_id', conversationId)
+    .maybeSingle();
+  if (existing.data?.seq != null) return Number(existing.data.seq);
+  if (existing.error) {
+    console.error(`[db] read trio rotation slot (${conversationId}): ${existing.error.message}`);
+    return null;
+  }
+
+  const inserted = await supabase
+    .from('trio_rotation')
+    .insert({ conversation_id: conversationId })
+    .select('seq')
+    .single();
+  if (inserted.data?.seq != null) return Number(inserted.data.seq);
+
+  // 23505 = unique violation: another concurrent create claimed this same
+  // conversation between our read and our insert. Its slot is the right answer.
+  if (inserted.error?.code === '23505') {
+    const raced = await supabase
+      .from('trio_rotation')
+      .select('seq')
+      .eq('conversation_id', conversationId)
+      .maybeSingle();
+    if (raced.data?.seq != null) return Number(raced.data.seq);
+  }
+  console.error(`[db] claim trio rotation slot (${conversationId}): ${inserted.error?.message ?? 'no row returned'}`);
+  return null;
+}
+
+// Best-effort write-back of who the slot resolved to, for reporting only — the
+// owner is always derivable from seq, so a failure here costs a report row, not
+// an assignment.
+export async function dbRecordTrioRotationOwner(conversationId: string, owner: string): Promise<void> {
+  const { error } = await supabase
+    .from('trio_rotation')
+    .update({ owner })
+    .eq('conversation_id', conversationId);
+  if (error) {
+    console.error(`[db] record trio rotation owner (${conversationId}): ${error.message}`);
+  }
+}
+
+// How many slots each trio member has been allocated, optionally since a date
+// (ISO). This is the number that answers "is it actually split evenly" —
+// allocations, not current holdings, which is what the rotation guarantees.
+export async function dbTrioRotationTally(since?: string): Promise<Record<string, number>> {
+  let q = supabase.from('trio_rotation').select('owner');
+  if (since) q = q.gte('created_at', since);
+  const { data, error } = await q;
+  if (error) {
+    console.error(`[db] trio rotation tally: ${error.message}`);
+    return {};
+  }
+  const out: Record<string, number> = {};
+  for (const r of (data ?? []) as Array<{ owner: string | null }>) {
+    const key = r.owner ?? '(unrecorded)';
+    out[key] = (out[key] ?? 0) + 1;
+  }
+  return out;
+}
+
 // Pulls every ticketed row in one paginated sweep and pivots in JS — same
 // pattern the dashboard uses for severity/category since those values live
 // inside the summary JSON. Returns the slim shape the reporting page needs;

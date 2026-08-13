@@ -3,6 +3,7 @@ import {
   dbBatchUpdateAsanaStatus,
   dbListOpenTicketsForAmRederive,
   dbBatchUpdateAccountManager,
+  dbTrioRotationTally,
 } from '@/lib/db';
 import {
   fetchOpenProjectTasks,
@@ -272,9 +273,9 @@ export async function reconcileAccountManagers(
 // was all going to one person.
 //
 // This pass copies the assignee into the AM field. The assignee is never
-// rewritten: a person moved that deliberately and their choice wins. It also
-// keeps the least-loaded pick honest, since pickTrioOwner counts open tickets by
-// assignee — after this runs, the field and the count agree.
+// rewritten: a person moved that deliberately and their choice wins. Note this
+// does NOT feed back into assignment — the rotation in pickTrioOwner allocates
+// by turn, so a hand-off changes who holds a ticket, never whose turn is next.
 //
 // Tasks with no assignee, or an assignee outside the trio, are left untouched:
 // there is nothing to copy, and guessing would undo a deliberate hand-off.
@@ -284,9 +285,14 @@ export interface TrioOwnerSyncResult {
   aligned: number;     // field already matched
   skipped: number;     // unassigned, or assignee outside the trio
   failed: number;      // Asana write failed; retried next tick
-  // Open tickets each of the three is holding right now — the same count
-  // pickTrioOwner balances on, so this is the number to quote when someone asks
-  // whether the column is spread evenly.
+  // Two different questions, both worth reporting:
+  //   allocated — how many tickets the rotation has GIVEN each of them. This is
+  //     the one that answers "is it split equally": strict rotation makes these
+  //     equal to within one, whatever anyone's queue looks like.
+  //   load — how many OPEN tickets each is holding right now, by assignee. Uneven
+  //     here is expected and fine: they work different hours and hand tickets
+  //     over, so holdings drift even when allocation is exactly equal.
+  allocated: Record<string, number>;
   load: Record<string, number>;
   changes: Array<{ task: string; from: string | null; to: string }>;
 }
@@ -296,8 +302,11 @@ export async function reconcileTrioOwners(
 ): Promise<TrioOwnerSyncResult> {
   const dryRun = opts.dryRun === true;
   const result: TrioOwnerSyncResult = {
-    considered: 0, restamped: 0, aligned: 0, skipped: 0, failed: 0, load: {}, changes: [],
+    considered: 0, restamped: 0, aligned: 0, skipped: 0, failed: 0,
+    allocated: {}, load: {}, changes: [],
   };
+
+  result.allocated = await dbTrioRotationTally();
 
   const tasks = await fetchTrioColumnTasks();
   if (!tasks) {
@@ -323,7 +332,8 @@ export async function reconcileTrioOwners(
   console.log(
     `[trio-sync]${dryRun ? ' DRY-RUN' : ''} considered=${result.considered} ` +
       `restamped=${result.restamped} aligned=${result.aligned} skipped=${result.skipped} failed=${result.failed} ` +
-      `load=${Object.entries(result.load).map(([o, n]) => `${o}:${n}`).join(' ')}`,
+      `allocated=${Object.entries(result.allocated).map(([o, n]) => `${o}:${n}`).join(' ') || '(ledger empty)'} ` +
+      `holding=${Object.entries(result.load).map(([o, n]) => `${o}:${n}`).join(' ')}`,
   );
   for (const c of result.changes) {
     console.log(`[trio-sync]   task ${c.task}: AM ${c.from ?? '(unset)'} -> ${c.to}`);
